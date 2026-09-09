@@ -47,3 +47,25 @@ the same day receive a numeric suffix rather than reusing an existing directory.
 Git progress goes to stderr; stdout remains reserved for resulting paths.
 
 Run `try -help` for complete usage and configuration instructions.
+
+## `work`
+
+`work` lists, creates, and removes linked Sapling worktrees. It uses the
+worktree group for the current repository, falling back to a default repository
+configured in `~/.config/work/config.yaml`. Its path-oriented output works
+naturally with Apex, Acme, and shell pipelines.
+
+```sh
+cd work
+go build
+
+./work ls
+./work new test-feature
+./work rm /path/to/worktree
+./work install-hooks
+./work status
+./work dash
+```
+
+See [`work/README.md`](work/README.md) or run `work -help` for configuration,
+agent hooks, and the live Apex dashboard.
