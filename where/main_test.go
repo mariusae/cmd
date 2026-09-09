@@ -135,6 +135,87 @@ func TestFindMatchesSupportsMultipleTraversalLevels(t *testing.T) {
 	}
 }
 
+func TestFindMatchesSupportsExactComponents(t *testing.T) {
+	root := t.TempDir()
+	makeDir(t, filepath.Join(root, "lib"))
+	makeDir(t, filepath.Join(root, "library"))
+	makeFile(t, filepath.Join(root, "lib", "rc"))
+	makeFile(t, filepath.Join(root, "lib", "rcrc"))
+	makeFile(t, filepath.Join(root, "library", "rc"))
+	makeFile(t, filepath.Join(root, "library", "rcrc"))
+
+	tests := []struct {
+		name  string
+		query string
+		want  []string
+	}{
+		{
+			name:  "quoted first component",
+			query: `"lib"/rc`,
+			want: []string{
+				filepath.Join(root, "lib", "rc"),
+				filepath.Join(root, "lib", "rcrc"),
+			},
+		},
+		{
+			name:  "equals first component",
+			query: "=lib/rc",
+			want: []string{
+				filepath.Join(root, "lib", "rc"),
+				filepath.Join(root, "lib", "rcrc"),
+			},
+		},
+		{
+			name:  "quoted second component",
+			query: `lib/"rc"`,
+			want: []string{
+				filepath.Join(root, "lib", "rc"),
+				filepath.Join(root, "library", "rc"),
+			},
+		},
+		{
+			name:  "equals second component",
+			query: "lib/=rc",
+			want: []string{
+				filepath.Join(root, "lib", "rc"),
+				filepath.Join(root, "library", "rc"),
+			},
+		},
+		{
+			name:  "quoted whole query",
+			query: `"lib/rc"`,
+			want:  []string{filepath.Join(root, "lib", "rc")},
+		},
+		{
+			name:  "equals every component",
+			query: "=lib/=rc",
+			want:  []string{filepath.Join(root, "lib", "rc")},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			matches, err := findMatches(test.query, root)
+			if err != nil {
+				t.Fatalf("findMatches: %v", err)
+			}
+			if got := rendered(matches); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("matches = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestParseQueryRejectsMalformedExactComponents(t *testing.T) {
+	for _, query := range []string{`"lib/rc`, `lib/rc"`, `lib/"r"c`, `lib/=`, `""/rc`} {
+		t.Run(query, func(t *testing.T) {
+			if _, err := parseQuery(query); err == nil {
+				t.Fatalf("parseQuery(%q) returned nil error", query)
+			}
+		})
+	}
+}
+
 func TestFindMatchesRejectsEmptyQueryComponent(t *testing.T) {
 	_, err := findMatches("mon//BUCK", t.TempDir())
 	if err == nil {
@@ -173,6 +254,8 @@ func TestRunHelp(t *testing.T) {
 				"where finds files and directories",
 				"export WHEREPATH=",
 				"where mon/BUCK",
+				`where "lib"/rc`,
+				"where =lib/=rc",
 			} {
 				if !strings.Contains(stdout.String(), want) {
 					t.Errorf("help output does not contain %q", want)

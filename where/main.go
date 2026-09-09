@@ -14,6 +14,11 @@ type match struct {
 	isDir bool
 }
 
+type queryComponent struct {
+	text  string
+	exact bool
+}
+
 const helpText = `where finds files and directories when you know part of their path.
 
 Usage:
@@ -25,7 +30,9 @@ containing QUERY. Searches are case-sensitive. Directory results end in a slash.
 
 A query may contain slash-separated components. Each component narrows the set of
 directories searched for the next component, without recursively scanning every
-directory below a root.
+directory below a root. Components match substrings unless they are enclosed in
+double quotes or prefixed with =. Quoting the whole query makes every component
+exact.
 
 Configuration:
   Set WHEREPATH to a colon-separated list of directories or glob patterns:
@@ -43,8 +50,23 @@ Examples:
   where mon/BUCK
       Find entries containing "BUCK" inside matching "mon" directories.
 
+  where "lib"/rc
+  where =lib/rc
+      Find names containing "rc" directly inside the exact directory "lib".
+
+  where lib/"rc"
+  where lib/=rc
+      Find the exact name "rc" inside directories containing "lib".
+
+  where "lib/rc"
+  where =lib/=rc
+      Match both "lib" and "rc" exactly.
+
   where project/src/main
       Traverse three partially specified path components.
+
+In shells that consume double quotes, use the = form or escape the quotes so
+they reach where. rc passes double quotes through literally.
 `
 
 func main() {
@@ -85,22 +107,21 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) in
 }
 
 func findMatches(query, wherePath string) ([]match, error) {
-	roots, err := expandWherePath(wherePath)
+	components, err := parseQuery(query)
 	if err != nil {
 		return nil, err
 	}
-	terms := strings.Split(query, "/")
-	for _, term := range terms {
-		if term == "" {
-			return nil, fmt.Errorf("query %q contains an empty path component", query)
-		}
+
+	roots, err := expandWherePath(wherePath)
+	if err != nil {
+		return nil, err
 	}
 
 	parents := roots
 	var readErrors []error
 
 	var matches []match
-	for termIndex, term := range terms {
+	for componentIndex, component := range components {
 		matches = nil
 		seen := make(map[string]struct{})
 		for _, parent := range parents {
@@ -112,7 +133,10 @@ func findMatches(query, wherePath string) ([]match, error) {
 
 			for _, entry := range entries {
 				name := entry.Name()
-				if !strings.Contains(name, term) {
+				if component.exact && name != component.text {
+					continue
+				}
+				if !component.exact && !strings.Contains(name, component.text) {
 					continue
 				}
 
@@ -123,7 +147,7 @@ func findMatches(query, wherePath string) ([]match, error) {
 						isDir = info.IsDir()
 					}
 				}
-				if termIndex < len(terms)-1 && !isDir {
+				if componentIndex < len(components)-1 && !isDir {
 					continue
 				}
 
@@ -149,6 +173,39 @@ func findMatches(query, wherePath string) ([]match, error) {
 	}
 
 	return matches, errors.Join(readErrors...)
+}
+
+func parseQuery(query string) ([]queryComponent, error) {
+	exactAll := len(query) >= 2 && strings.HasPrefix(query, `"`) &&
+		strings.HasSuffix(query, `"`) && strings.Count(query, `"`) == 2
+	if exactAll {
+		query = query[1 : len(query)-1]
+	}
+
+	rawComponents := strings.Split(query, "/")
+	components := make([]queryComponent, 0, len(rawComponents))
+	for _, raw := range rawComponents {
+		component := queryComponent{text: raw, exact: exactAll}
+		if !exactAll && strings.HasPrefix(component.text, "=") {
+			component.exact = true
+			component.text = component.text[1:]
+		}
+
+		if !exactAll && strings.Contains(component.text, `"`) {
+			if len(component.text) < 2 || !strings.HasPrefix(component.text, `"`) ||
+				!strings.HasSuffix(component.text, `"`) || strings.Count(component.text, `"`) != 2 {
+				return nil, fmt.Errorf("query %q contains mismatched quotes", query)
+			}
+			component.exact = true
+			component.text = component.text[1 : len(component.text)-1]
+		}
+
+		if component.text == "" {
+			return nil, fmt.Errorf("query %q contains an empty path component", query)
+		}
+		components = append(components, component)
+	}
+	return components, nil
 }
 
 func expandWherePath(wherePath string) ([]string, error) {
