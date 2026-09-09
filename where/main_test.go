@@ -151,7 +151,7 @@ func TestFindMatchesSupportsExactComponents(t *testing.T) {
 	}{
 		{
 			name:  "quoted first component",
-			query: `"lib"/rc`,
+			query: `"lib/rc`,
 			want: []string{
 				filepath.Join(root, "lib", "rc"),
 				filepath.Join(root, "lib", "rcrc"),
@@ -167,7 +167,7 @@ func TestFindMatchesSupportsExactComponents(t *testing.T) {
 		},
 		{
 			name:  "quoted second component",
-			query: `lib/"rc"`,
+			query: `lib/"rc`,
 			want: []string{
 				filepath.Join(root, "lib", "rc"),
 				filepath.Join(root, "library", "rc"),
@@ -182,8 +182,18 @@ func TestFindMatchesSupportsExactComponents(t *testing.T) {
 			},
 		},
 		{
-			name:  "quoted whole query",
-			query: `"lib/rc"`,
+			name:  "repeated quote makes remaining components exact",
+			query: `""lib/rc`,
+			want:  []string{filepath.Join(root, "lib", "rc")},
+		},
+		{
+			name:  "repeated equals makes remaining components exact",
+			query: "==lib/rc",
+			want:  []string{filepath.Join(root, "lib", "rc")},
+		},
+		{
+			name:  "quote marks each component exact",
+			query: `"lib/"rc`,
 			want:  []string{filepath.Join(root, "lib", "rc")},
 		},
 		{
@@ -206,8 +216,39 @@ func TestFindMatchesSupportsExactComponents(t *testing.T) {
 	}
 }
 
+func TestFindMatchesSupportsExactModeAfterPartialComponents(t *testing.T) {
+	root := t.TempDir()
+	for _, parent := range []string{"lib", "library"} {
+		makeDir(t, filepath.Join(root, parent, "apex"))
+		makeDir(t, filepath.Join(root, parent, "apex-tools"))
+		makeFile(t, filepath.Join(root, parent, "apex", "rc"))
+		makeFile(t, filepath.Join(root, parent, "apex", "rcrc"))
+	}
+
+	want := []string{
+		filepath.Join(root, "lib", "apex", "rc"),
+		filepath.Join(root, "library", "apex", "rc"),
+	}
+	for _, query := range []string{
+		`lib/""apex/rc`,
+		"lib/==apex/rc",
+		`lib/"apex/"rc`,
+		"lib/=apex/=rc",
+	} {
+		t.Run(query, func(t *testing.T) {
+			matches, err := findMatches(query, root)
+			if err != nil {
+				t.Fatalf("findMatches: %v", err)
+			}
+			if got := rendered(matches); !reflect.DeepEqual(got, want) {
+				t.Fatalf("matches = %#v, want %#v", got, want)
+			}
+		})
+	}
+}
+
 func TestParseQueryRejectsMalformedExactComponents(t *testing.T) {
-	for _, query := range []string{`"lib/rc`, `lib/rc"`, `lib/"r"c`, `lib/=`, `""/rc`} {
+	for _, query := range []string{`lib/rc"`, `lib/"r"c`, `lib/"`, `lib/=`, `""/rc`} {
 		t.Run(query, func(t *testing.T) {
 			if _, err := parseQuery(query); err == nil {
 				t.Fatalf("parseQuery(%q) returned nil error", query)
@@ -254,7 +295,8 @@ func TestRunHelp(t *testing.T) {
 				"where finds files and directories",
 				"export WHEREPATH=",
 				"where mon/BUCK",
-				`where "lib"/rc`,
+				`where "lib/rc`,
+				`where ""lib/rc`,
 				"where =lib/=rc",
 			} {
 				if !strings.Contains(stdout.String(), want) {
