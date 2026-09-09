@@ -24,3 +24,26 @@ go build
 export WHEREPATH="$HOME/src/*:$HOME/work/*"
 ./where mon/BUCK
 ```
+
+## `try`
+
+`try` finds and creates dated experiment directories under `~/src/tries`, or
+the directory configured by `TRY_PATH`. Its output is deliberately just a list
+of directory paths, making it suitable for use from Apex, Acme, or a shell.
+Run it without a query to list the 20 most recent tries. Query results favor
+exact name components and then newer tries.
+
+```sh
+cd try
+go build
+
+./try md
+./try -n newproject
+./try -n git@github.com:mariusae/cmd.git
+```
+
+Names containing whitespace are normalized with hyphens, and repeated names on
+the same day receive a numeric suffix rather than reusing an existing directory.
+Git progress goes to stderr; stdout remains reserved for resulting paths.
+
+Run `try -help` for complete usage and configuration instructions.
