@@ -15,6 +15,7 @@ known.
 
 `WHEREPATH` uses the platform path-list separator and accepts glob patterns.
 Results are printed one per line, with a trailing slash for directories.
+Run `where -help` for complete configuration and usage instructions.
 
 ```sh
 cd where

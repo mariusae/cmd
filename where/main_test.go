@@ -154,6 +154,34 @@ func TestRunRequiresWherePath(t *testing.T) {
 	}
 }
 
+func TestRunHelp(t *testing.T) {
+	for _, arg := range []string{"-help", "--help", "-h"} {
+		t.Run(arg, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := run([]string{arg}, func(string) string {
+				t.Fatal("help should not read WHEREPATH")
+				return ""
+			}, &stdout, &stderr)
+
+			if code != 0 {
+				t.Fatalf("exit code = %d, want 0", code)
+			}
+			if stderr.Len() != 0 {
+				t.Fatalf("stderr = %q, want empty", stderr.String())
+			}
+			for _, want := range []string{
+				"where finds files and directories",
+				"export WHEREPATH=",
+				"where mon/BUCK",
+			} {
+				if !strings.Contains(stdout.String(), want) {
+					t.Errorf("help output does not contain %q", want)
+				}
+			}
+		})
+	}
+}
+
 func TestExpandWherePathRejectsMalformedGlob(t *testing.T) {
 	_, err := expandWherePath("[")
 	if err == nil {

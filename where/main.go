@@ -14,13 +14,51 @@ type match struct {
 	isDir bool
 }
 
+const helpText = `where finds files and directories when you know part of their path.
+
+Usage:
+  where QUERY
+  where -help
+
+where searches the immediate children of every directory in WHEREPATH for names
+containing QUERY. Searches are case-sensitive. Directory results end in a slash.
+
+A query may contain slash-separated components. Each component narrows the set of
+directories searched for the next component, without recursively scanning every
+directory below a root.
+
+Configuration:
+  Set WHEREPATH to a colon-separated list of directories or glob patterns:
+
+    export WHEREPATH="$HOME/src:$HOME/work/*"
+
+  Put the export in your shell startup file (for example, ~/.bashrc or ~/.zshrc)
+  to make it persistent. Glob patterns are expanded by where, so quote WHEREPATH
+  when assigning it.
+
+Examples:
+  where mon
+      Find immediate entries containing "mon" in each WHEREPATH root.
+
+  where mon/BUCK
+      Find entries containing "BUCK" inside matching "mon" directories.
+
+  where project/src/main
+      Traverse three partially specified path components.
+`
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Getenv, os.Stdout, os.Stderr))
 }
 
 func run(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
+	if len(args) == 1 && (args[0] == "-help" || args[0] == "--help" || args[0] == "-h") {
+		fmt.Fprint(stdout, helpText)
+		return 0
+	}
+
 	if len(args) != 1 || args[0] == "" {
-		fmt.Fprintln(stderr, "usage: where QUERY")
+		fmt.Fprintln(stderr, "usage: where QUERY (try 'where -help' for help)")
 		return 2
 	}
 
