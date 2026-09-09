@@ -2,6 +2,9 @@
 
 A collection of small command-line tools. Each tool lives in its own directory.
 
+Run `./update.bash` from the repository root to build every Go command and
+update its Linux binary in `~/bin` with `updatebin`.
+
 ## `where`
 
 `where` finds files and directories whose names contain a query. It searches the
