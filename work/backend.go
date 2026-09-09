@@ -31,6 +31,7 @@ type repository struct {
 type backend interface {
 	name() string
 	open(path string) (repository, error)
+	latestChangeTitle(path string) (string, error)
 	add(repo repository, path, label string, diagnostics io.Writer) error
 	remove(repo repository, path string, diagnostics io.Writer) error
 }

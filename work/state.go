@@ -246,6 +246,9 @@ COMMIT;
 }
 
 func (s *stateStore) get(worktreePath string) (agentState, bool, error) {
+	if err := s.initialize(); err != nil {
+		return agentState{}, false, err
+	}
 	query := fmt.Sprintf(`
 SELECT worktree_path, repository_root, status, agent, session_id, title, transcript_path,
        apex_socket, apex_session, apex_window, updated_at

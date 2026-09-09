@@ -116,6 +116,14 @@ func (b *saplingBackend) open(path string) (repository, error) {
 	}, nil
 }
 
+func (b *saplingBackend) latestChangeTitle(path string) (string, error) {
+	output, err := b.output(path, "log", "-r", ".", "-T", "{desc|firstline}\\n")
+	if err != nil {
+		return "", fmt.Errorf("reading current Sapling change: %w", err)
+	}
+	return strings.Join(strings.Fields(string(output)), " "), nil
+}
+
 func (b *saplingBackend) add(repo repository, path, label string, diagnostics io.Writer) error {
 	cmd := exec.Command(b.executable, "worktree", "add", path, "--label", label, "--rev", ".")
 	cmd.Dir = repo.CurrentRoot

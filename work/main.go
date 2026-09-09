@@ -14,9 +14,11 @@ import (
 const helpText = `work manages linked Sapling worktrees.
 
 Usage:
-  work [ls]
+  work
+  work ls
   work new NAME
   work rm [PATH|LABEL]
+  work note [PATH|LABEL]
   work status
   work dash
   work install-hooks
@@ -27,10 +29,13 @@ worktree-capable repository, it uses the default repository from
 ~/.config/work/config.yaml.
 
 Commands:
+  work            Show details for the current worktree, or list the default.
   ls              Print linked worktree paths. The main worktree is omitted.
   new NAME        Create YYYY-MM-DD-NAME beside the main worktree.
   rm              Remove the current linked worktree.
   rm PATH|LABEL   Remove the selected linked worktree.
+  note            Create and open the current worktree's notes file in Apex.
+  note PATH|LABEL Create and open another worktree's notes file in Apex.
   status          Show the latest agent status for each linked worktree.
   dash            Open a live worktree and agent dashboard in Apex.
   install-hooks   Install status hooks for supported agents.
@@ -59,6 +64,7 @@ type command struct {
 	stdin       io.Reader
 	stdout      io.Writer
 	stderr      io.Writer
+	plumbFile   func(string) error
 }
 
 func main() {
@@ -79,7 +85,7 @@ func main() {
 func (c command) run(args []string) int {
 	parsed, ok := parseArgs(args)
 	if !ok {
-		fmt.Fprintln(c.stderr, "usage: work [ls] | work new NAME | work rm [PATH|LABEL] | work status | work dash | work install-hooks (try 'work -help' for help)")
+		fmt.Fprintln(c.stderr, "usage: work [ls] | work new NAME | work rm [PATH|LABEL] | work note [PATH|LABEL] | work status | work dash | work install-hooks (try 'work -help' for help)")
 		return 2
 	}
 	if parsed.action == "help" {
@@ -143,12 +149,39 @@ func (c command) run(args []string) int {
 	}
 
 	switch parsed.action {
-	case "ls":
-		for _, worktree := range resolved.repo.Worktrees {
-			if !worktree.Main {
-				fmt.Fprintln(c.stdout, directoryPath(worktree.Path))
-			}
+	case "default":
+		if !resolved.fromCurrent {
+			printWorktrees(c.stdout, resolved.repo)
+			return 0
 		}
+		target, err := currentWorktree(resolved.repo)
+		if err != nil {
+			return c.fail(err)
+		}
+		store, err := newStateStore(home, getenv)
+		if err != nil {
+			return c.fail(err)
+		}
+		state, exists, err := store.get(target.Path)
+		if err != nil {
+			return c.fail(err)
+		}
+		title := liveAgentTitles(resolved.repo, getenv)[filepath.Clean(target.Path)]
+		if title == "" {
+			title = state.Title
+		}
+		changeTitle, err := c.backend.latestChangeTitle(target.Path)
+		if err != nil {
+			return c.fail(err)
+		}
+		text, err := renderWorktreeSummary(target, state, exists, title, store, c.now(), changeTitle)
+		if err != nil {
+			return c.fail(err)
+		}
+		fmt.Fprint(c.stdout, text)
+		return 0
+	case "ls":
+		printWorktrees(c.stdout, resolved.repo)
 		return 0
 	case "status":
 		store, err := newStateStore(home, getenv)
@@ -197,6 +230,23 @@ func (c command) run(args []string) int {
 			return c.fail(err)
 		}
 		if err := expandDashboardAtPoint(parsed.argument, resolved.repo, store); err != nil {
+			return c.fail(err)
+		}
+		return 0
+	case "note":
+		target, err := noteTarget(resolved.repo, parsed.argument, cwd)
+		if err != nil {
+			return c.fail(err)
+		}
+		path, err := ensureNoteFile(home, target, c.now())
+		if err != nil {
+			return c.fail(err)
+		}
+		plumb := c.plumbFile
+		if plumb == nil {
+			plumb = plumbNote
+		}
+		if err := plumb(path); err != nil {
 			return c.fail(err)
 		}
 		return 0
@@ -253,7 +303,7 @@ type parsedArguments struct {
 
 func parseArgs(args []string) (parsedArguments, bool) {
 	if len(args) == 0 {
-		return parsedArguments{action: "ls"}, true
+		return parsedArguments{action: "default"}, true
 	}
 	if len(args) == 1 && isHelp(args[0]) {
 		return parsedArguments{action: "help"}, true
@@ -266,6 +316,13 @@ func parseArgs(args []string) (parsedArguments, bool) {
 	}
 	if len(args) == 1 && args[0] == "dash" {
 		return parsedArguments{action: "dash"}, true
+	}
+	if len(args) >= 1 && len(args) <= 2 && args[0] == "note" {
+		parsed := parsedArguments{action: "note"}
+		if len(args) == 2 {
+			parsed.argument = args[1]
+		}
+		return parsed, true
 	}
 	if len(args) == 1 && args[0] == "dash-live" {
 		return parsedArguments{action: "dash-live"}, true
@@ -296,6 +353,14 @@ func parseArgs(args []string) (parsedArguments, bool) {
 		return parsedArguments{action: "dash-expand", argument: args[1]}, true
 	}
 	return parsedArguments{}, false
+}
+
+func printWorktrees(output io.Writer, repo repository) {
+	for _, worktree := range repo.Worktrees {
+		if !worktree.Main {
+			fmt.Fprintln(output, directoryPath(worktree.Path))
+		}
+	}
 }
 
 func isHelp(arg string) bool {
@@ -468,6 +533,22 @@ func removalTarget(resolved resolvedRepository, argument, cwd string) (worktree,
 	}
 	for _, candidate := range resolved.repo.Worktrees {
 		if candidate.Label == argument || candidate.handle() == argument {
+			return candidate, nil
+		}
+	}
+	return worktree{}, fmt.Errorf("worktree %q not found (use 'work ls' to list worktrees)", argument)
+}
+
+func noteTarget(repo repository, argument, cwd string) (worktree, error) {
+	if argument == "" {
+		return currentWorktree(repo)
+	}
+	argumentPath := argument
+	if !filepath.IsAbs(argumentPath) {
+		argumentPath = filepath.Join(cwd, argumentPath)
+	}
+	for _, candidate := range repo.Worktrees {
+		if pathsEqual(candidate.Path, argumentPath) || candidate.Label == argument || candidate.handle() == argument {
 			return candidate, nil
 		}
 	}

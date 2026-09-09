@@ -62,6 +62,7 @@ go build
 ./work ls
 ./work new test-feature
 ./work rm /path/to/worktree
+./work note
 ./work install-hooks
 ./work status
 ./work dash

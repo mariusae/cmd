@@ -72,7 +72,8 @@ func TestRenderDashboardShowsPlainWorktreeRows(t *testing.T) {
 }
 
 func TestRenderDashboardExpansionShowsTransitionHistory(t *testing.T) {
-	store, err := newStateStore(t.TempDir(), func(string) string { return "" })
+	home := t.TempDir()
+	store, err := newStateStore(home, func(string) string { return "" })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,6 +119,13 @@ func TestRenderDashboardExpansionShowsTransitionHistory(t *testing.T) {
 	}
 	if !strings.Contains(text, "\t12:01AM complete (10s)\n\t\tAll done.\n\t\t\n\t\t- Tests pass.\n") {
 		t.Fatalf("dashboard has no done history event:\n%s", text)
+	}
+	note := filepath.Join(home, "work", filepath.Base(linked), "working.md")
+	if !strings.Contains(text, "\t"+note+"\n") {
+		t.Fatalf("dashboard has no notes path %q:\n%s", note, text)
+	}
+	if _, err := os.Stat(note); err != nil {
+		t.Fatalf("dashboard did not create notes file: %v", err)
 	}
 }
 

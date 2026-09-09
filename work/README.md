@@ -7,15 +7,24 @@ designed to be useful as clickable paths in Apex and Acme as well as in a shell.
 work ls
 work new test-feature
 work rm /data/users/me/fbsource-2026-09-09-test-feature/
+work note
 work install-hooks
 work status
 work dash
 ```
 
-Running `work` without arguments is equivalent to `work ls`. `ls` omits the
-main worktree. `new` creates a dated sibling of the main worktree and checks out
-the current revision. `rm` without an argument removes the current worktree,
-but only when run from a linked worktree. The main worktree is never removable.
+Inside a worktree, running `work` without arguments shows its status, notes
+path, recent agent events, and current Sapling change title. The notes file is
+created if necessary. Outside a repository, bare `work` lists the configured
+default repository's linked worktrees. Explicit `work ls` always lists linked
+worktrees and omits the main worktree. `new` creates a dated sibling of the main
+worktree and checks out the current revision. `rm` without an argument removes
+the current worktree, but only when run from a linked worktree. The main
+worktree is never removable.
+
+`work note` creates and opens `~/work/HANDLE/working.md` in Apex. An optional
+worktree path or label opens another worktree's notes. The containing directory
+is left available for any other scratch files associated with that worktree.
 
 ## Configuration
 
@@ -63,10 +72,11 @@ body contains only the worktree rows; there is no header or dashboard chrome.
 
 Choose `Expand` from Apex's tools menu with the point on a worktree row (or one
 of its detail rows) to toggle the last five status events in chronological
-order. Completed events include the corresponding assistant response read from
-the recorded Claude, Codex, Gemini, or OpenCode session transcript when it is
-available, plus the elapsed time from that operation's first `working` event.
-The history continues to update while the dashboard is open.
+order. The expanded section starts with the worktree's notes path, which can be
+opened with B3. Completed events include the corresponding assistant response
+read from the recorded Claude, Codex, Gemini, or OpenCode session transcript
+when it is available, plus the elapsed time from that operation's first
+`working` event. The history continues to update while the dashboard is open.
 When an agent is running in the current Apex session, B3 on its agent name
 (such as `codex`) warps to that agent's live window.
 `Get` forces an immediate repository and status refresh.

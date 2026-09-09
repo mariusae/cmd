@@ -486,29 +486,62 @@ func renderDashboard(repo repository, store *stateStore, now time.Time, liveTitl
 		if !expanded[path] {
 			continue
 		}
-		events, err := store.listEvents(path, dashboardEventLimit)
-		if err != nil {
+		if err := writeWorktreeDetails(&output, worktree, store, now); err != nil {
 			return "", err
-		}
-		for _, event := range events {
-			status := event.Status
-			if status == "done" {
-				status = "complete"
-				if event.StartedAt > 0 {
-					status += " (" + formatOperationDuration(event.StartedAt, event.CreatedAt) + ")"
-				}
-			}
-			fmt.Fprintf(&output, "\t%s %s\n", formatEventTime(event.CreatedAt, now), status)
-			if event.Status != "done" {
-				continue
-			}
-			messages, _ := store.transcriptMessages(event)
-			if transcript := transcriptForEvent(messages, event.CreatedAt); transcript != "" {
-				writeIndentedTranscript(&output, transcript)
-			}
 		}
 	}
 	return output.String(), nil
+}
+
+func renderWorktreeSummary(worktree worktree, state agentState, exists bool, title string, store *stateStore, now time.Time, changeTitle string) (string, error) {
+	var output strings.Builder
+	output.WriteString(worktreeStatusLine(worktree.Path, state, exists, title, now))
+	output.WriteByte('\n')
+	note, err := ensureNoteFile(store.home, worktree, now)
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprintf(&output, "note: %s\n", note)
+	fmt.Fprintf(&output, "last change: %s\n", dashboardField(changeTitle))
+	output.WriteString("agent:\n")
+	if err := writeAgentEvents(&output, worktree.Path, store, now); err != nil {
+		return "", err
+	}
+	return output.String(), nil
+}
+
+func writeWorktreeDetails(output *strings.Builder, worktree worktree, store *stateStore, now time.Time) error {
+	note, err := ensureNoteFile(store.home, worktree, now)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(output, "\t%s\n", note)
+	return writeAgentEvents(output, worktree.Path, store, now)
+}
+
+func writeAgentEvents(output *strings.Builder, worktreePath string, store *stateStore, now time.Time) error {
+	events, err := store.listEvents(worktreePath, dashboardEventLimit)
+	if err != nil {
+		return err
+	}
+	for _, event := range events {
+		status := event.Status
+		if status == "done" {
+			status = "complete"
+			if event.StartedAt > 0 {
+				status += " (" + formatOperationDuration(event.StartedAt, event.CreatedAt) + ")"
+			}
+		}
+		fmt.Fprintf(output, "\t%s %s\n", formatEventTime(event.CreatedAt, now), status)
+		if event.Status != "done" {
+			continue
+		}
+		messages, _ := store.transcriptMessages(event)
+		if transcript := transcriptForEvent(messages, event.CreatedAt); transcript != "" {
+			writeIndentedTranscript(output, transcript)
+		}
+	}
+	return nil
 }
 
 func worktreeStatusLine(path string, state agentState, exists bool, title string, now time.Time) string {

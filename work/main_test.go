@@ -15,6 +15,7 @@ import (
 
 type fakeBackend struct {
 	repositories map[string]repository
+	changeTitles map[string]string
 	openCalls    []string
 	addedPath    string
 	addedLabel   string
@@ -32,6 +33,10 @@ func (b *fakeBackend) open(path string) (repository, error) {
 		return repo, nil
 	}
 	return repository{}, errNotWorktreeRepository
+}
+
+func (b *fakeBackend) latestChangeTitle(path string) (string, error) {
+	return b.changeTitles[filepath.Clean(path)], nil
 }
 
 func (b *fakeBackend) add(_ repository, path, label string, _ io.Writer) error {
@@ -117,6 +122,55 @@ func TestListFallsBackToConfiguredDefault(t *testing.T) {
 	}
 	if want := []string{home, defaultRoot}; !reflect.DeepEqual(b.openCalls, want) {
 		t.Fatalf("open calls = %#v, want %#v", b.openCalls, want)
+	}
+}
+
+func TestDefaultInWorktreeShowsCurrentSummary(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(t.TempDir(), "fbsource")
+	linked := root + "-task"
+	repo := testRepository(root, linked)
+	repo.CurrentRoot = linked
+	repo.Worktrees[0].Current = false
+	repo.Worktrees[1].Current = true
+	repo.Worktrees[1].Label = "task"
+	b := &fakeBackend{
+		repositories: map[string]repository{linked: repo},
+		changeTitles: map[string]string{linked: "Implement bare work summary"},
+	}
+	c, stdout, stderr := newTestCommand(t, linked, home, b)
+	store, err := newStateStore(home, c.getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := agentState{
+		WorktreePath: linked, RepositoryRoot: root, Status: "working",
+		Agent: "codex", SessionID: "one", Title: "Agent title", UpdatedAt: c.now().Add(-2 * time.Second).Unix(),
+	}
+	if err := store.update(state); err != nil {
+		t.Fatal(err)
+	}
+	state.Status = "done"
+	state.UpdatedAt = c.now().Unix()
+	if err := store.update(state); err != nil {
+		t.Fatal(err)
+	}
+
+	if code := c.run(nil); code != 0 {
+		t.Fatalf("run returned %d: %s", code, stderr.String())
+	}
+	note := filepath.Join(home, "work", "task", "working.md")
+	want := directoryPath(linked) + "\tdone\t12:00PM\tcodex\tAgent title\n" +
+		"note: " + note + "\n" +
+		"last change: Implement bare work summary\n" +
+		"agent:\n" +
+		"\t11:59AM working\n" +
+		"\t12:00PM complete (2s)\n"
+	if stdout.String() != want {
+		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+	}
+	if _, err := os.Stat(note); err != nil {
+		t.Fatalf("note was not created: %v", err)
 	}
 }
 
@@ -323,6 +377,9 @@ func TestHelpDoesNotRequireBackendOrConfiguration(t *testing.T) {
 }
 
 func TestParseDashboardCommands(t *testing.T) {
+	if parsed, ok := parseArgs(nil); !ok || parsed.action != "default" {
+		t.Fatalf("parseArgs(nil) = (%#v, %v)", parsed, ok)
+	}
 	if parsed, ok := parseArgs([]string{"dash"}); !ok || parsed.action != "dash" {
 		t.Fatalf("parseArgs(dash) = (%#v, %v)", parsed, ok)
 	}
@@ -334,6 +391,37 @@ func TestParseDashboardCommands(t *testing.T) {
 	}
 	if parsed, ok := parseArgs([]string{"agent-status", "done", "opencode", "session-1"}); !ok || parsed.session != "session-1" {
 		t.Fatalf("parseArgs(agent-status session) = (%#v, %v)", parsed, ok)
+	}
+	if parsed, ok := parseArgs([]string{"note", "task"}); !ok || parsed.action != "note" || parsed.argument != "task" {
+		t.Fatalf("parseArgs(note task) = (%#v, %v)", parsed, ok)
+	}
+}
+
+func TestNoteCreatesAndPlumbsCurrentWorktreeNote(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(t.TempDir(), "fbsource")
+	linked := root + "-2026-09-09-feature"
+	repo := testRepository(root, linked)
+	repo.CurrentRoot = linked
+	repo.Worktrees[0].Current = false
+	repo.Worktrees[1].Current = true
+	b := &fakeBackend{repositories: map[string]repository{linked: repo}}
+	c, _, stderr := newTestCommand(t, linked, home, b)
+	plumbed := ""
+	c.plumbFile = func(path string) error {
+		plumbed = path
+		return nil
+	}
+
+	if code := c.run([]string{"note"}); code != 0 {
+		t.Fatalf("note returned %d: %s", code, stderr.String())
+	}
+	want := filepath.Join(home, "work", "fbsource-2026-09-09-feature", "working.md")
+	if plumbed != want {
+		t.Fatalf("plumbed = %q, want %q", plumbed, want)
+	}
+	if _, err := os.Stat(want); err != nil {
+		t.Fatal(err)
 	}
 }
 
