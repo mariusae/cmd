@@ -1,40 +1,15 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	apexapi "github.com/mariusae/apex/go/apex"
 )
 
-type apexWindow struct {
-	ID   string
-	Name string
-	Live bool
-}
-
-func (a apexClient) windows() ([]apexWindow, error) {
-	output, err := a.output("", "win", "list")
-	if err != nil {
-		return nil, err
-	}
-	return parseApexWindows(output), nil
-}
-
-func parseApexWindows(output string) []apexWindow {
-	var windows []apexWindow
-	for _, line := range strings.Split(output, "\n") {
-		id, markedName, ok := strings.Cut(line, "\t")
-		if !ok || id == "" || markedName == "" {
-			continue
-		}
-		_, size := firstRune(markedName)
-		if size == 0 {
-			continue
-		}
-		windows = append(windows, apexWindow{ID: id, Name: markedName[size:], Live: markedName[:size] == ">"})
-	}
-	return windows
-}
+type apexWindow = apexapi.WindowInfo
 
 func firstRune(value string) (rune, int) {
 	for _, character := range value {
@@ -48,11 +23,17 @@ func liveAgentTitles(repo repository, getenv func(string) string) map[string]str
 	if getenv == nil || (getenv("APEX_SOCKET") == "" && getenv("apexsession") == "" && getenv("APEX_SESSION") == "") {
 		return titles
 	}
-	apex, err := newApexClient()
+	tool, err := attachApexTool(fmt.Sprintf("work-titles-%d", os.Getpid()), getenv)
 	if err != nil {
 		return titles
 	}
-	windows, err := apex.windows()
+	defer tool.Close()
+	return liveAgentTitlesFromTool(repo, tool)
+}
+
+func liveAgentTitlesFromTool(repo repository, tool *apexapi.Tool) map[string]string {
+	titles := make(map[string]string)
+	windows, err := tool.Windows()
 	if err != nil {
 		return titles
 	}

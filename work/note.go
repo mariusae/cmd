@@ -63,12 +63,12 @@ func ensureNoteFile(home string, target worktree, now time.Time) (string, error)
 }
 
 func plumbNote(path string) error {
-	client, err := connectApexTool(apexSocketPath(os.Getenv), apexSessionName(os.Getenv), fmt.Sprintf("work-note-%d", os.Getpid()))
+	tool, err := attachApexTool(fmt.Sprintf("work-note-%d", os.Getpid()), os.Getenv)
 	if err != nil {
 		return err
 	}
-	defer client.Close()
-	if err := client.gotoWindow(path); err != nil {
+	defer tool.Close()
+	if _, err := tool.Open(path, 0); err != nil {
 		return fmt.Errorf("opening note in Apex: %w", err)
 	}
 	return nil

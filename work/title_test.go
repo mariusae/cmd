@@ -27,17 +27,10 @@ func TestAgentTitlesFromApexWindowsUsesMostSpecificWorktree(t *testing.T) {
 		},
 	}
 	titles := agentTitlesFromWindows(repo, []apexWindow{
-		{ID: "1", Name: "/repo/.worktrees/feature/-⠋ Fix the tests", Live: true},
-		{ID: "2", Name: "/repo/.worktrees/feature/main.go"},
+		{ID: 1, Name: "/repo/.worktrees/feature/-⠋ Fix the tests", Live: true},
+		{ID: 2, Name: "/repo/.worktrees/feature/main.go"},
 	})
 	if got := titles["/repo/.worktrees/feature"]; got != "Fix the tests" {
 		t.Fatalf("title = %q", got)
-	}
-}
-
-func TestParseApexWindows(t *testing.T) {
-	windows := parseApexWindows("12\t>/repo/-Task title\n13\t*/repo/file.go\n")
-	if len(windows) != 2 || windows[0].ID != "12" || windows[0].Name != "/repo/-Task title" || !windows[0].Live || windows[1].Live {
-		t.Fatalf("windows = %#v", windows)
 	}
 }

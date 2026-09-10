@@ -172,7 +172,7 @@ func TestMatchingAgentWindowRequiresCurrentLiveApexLocation(t *testing.T) {
 		Agent: "codex", ApexSocket: "/tmp/apex/main.sock",
 		ApexSession: "code", ApexWindow: "12",
 	}
-	windows := []apexWindow{{ID: "12", Name: "/repo-task/-codex", Live: true}}
+	windows := []apexWindow{{ID: 12, Name: "/repo-task/-codex", Live: true}}
 	if got, ok := matchingAgentWindow(state, "codex", "/repo-task", "/tmp/apex/main.sock", "code", windows); !ok || got != windows[0].Name {
 		t.Fatalf("matchingAgentWindow = (%q, %v)", got, ok)
 	}
@@ -182,12 +182,6 @@ func TestMatchingAgentWindowRequiresCurrentLiveApexLocation(t *testing.T) {
 	windows[0].Live = false
 	if _, ok := matchingAgentWindow(state, "codex", "/repo-task", "/tmp/apex/main.sock", "code", windows); ok {
 		t.Fatal("matched a window that is no longer live")
-	}
-}
-
-func TestApexReplaceProgramEscapesText(t *testing.T) {
-	if got, want := apexReplaceProgram("hello\nworld|back\\slash"), `,c|hello\nworld\|back\\slash|`; got != want {
-		t.Fatalf("apex program = %q, want %q", got, want)
 	}
 }
 

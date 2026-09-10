@@ -1,20 +1,22 @@
 package main
 
 import (
-	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	apexapi "github.com/mariusae/apex/go/apex"
 )
 
 const (
@@ -22,181 +24,24 @@ const (
 	dashboardEventLimit   = 5
 )
 
-type apexClient struct {
-	executable string
-}
+type dashboardRequestKind int
 
-func newApexClient() (apexClient, error) {
-	executable, err := exec.LookPath("apex")
-	if err != nil {
-		return apexClient{}, fmt.Errorf("apex is required for 'work dash'")
-	}
-	return apexClient{executable: executable}, nil
-}
+const (
+	dashboardExpandRequest dashboardRequestKind = iota
+	dashboardNavigationRequest
+	dashboardRefreshRequest
+)
 
-func (a apexClient) output(input string, args ...string) (string, error) {
-	cmd := exec.Command(a.executable, args...)
-	if input != "" {
-		cmd.Stdin = strings.NewReader(input)
-	}
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		detail := strings.TrimSpace(stderr.String())
-		if detail == "" {
-			detail = err.Error()
-		}
-		return "", fmt.Errorf("apex %s: %s", strings.Join(args, " "), detail)
-	}
-	return stdout.String(), nil
-}
-
-func (a apexClient) addExpandRule(windowName, workExecutable string) (string, error) {
-	run := shellQuote(workExecutable) + " dash-expand $win"
-	output, err := a.output("", "plumb", "rule", "add",
-		"-verb=Expand",
-		"-file=^"+regexp.QuoteMeta(windowName)+"$",
-		"-kind=file",
-		"-run="+run,
-		"-priority=100",
-	)
-	if err != nil {
-		return "", err
-	}
-	id := strings.TrimSpace(output)
-	if id == "" {
-		return "", fmt.Errorf("apex plumb rule add returned no rule id")
-	}
-	return id, nil
-}
-
-func (a apexClient) addAgentNavigationRule(windowName, toolName string) (string, error) {
-	output, err := a.output("", "plumb", "rule", "add",
-		"-text=^[[:alnum:]_.+-]+$",
-		"-file=^"+regexp.QuoteMeta(windowName)+"$",
-		"-kind=file",
-		"-tool="+toolName,
-		"-priority=100",
-	)
-	if err != nil {
-		return "", err
-	}
-	id := strings.TrimSpace(output)
-	if id == "" {
-		return "", fmt.Errorf("apex plumb rule add returned no rule id")
-	}
-	return id, nil
-}
-
-func (a apexClient) addRefreshRule(windowName, toolName string) (string, error) {
-	output, err := a.output("", "plumb", "rule", "add",
-		"-verb=Get",
-		"-file=^"+regexp.QuoteMeta(windowName)+"$",
-		"-kind=file",
-		"-tool="+toolName,
-		"-priority=100",
-	)
-	if err != nil {
-		return "", err
-	}
-	id := strings.TrimSpace(output)
-	if id == "" {
-		return "", fmt.Errorf("apex plumb rule add returned no rule id")
-	}
-	return id, nil
-}
-
-func (a apexClient) windowName(id string) (string, error) {
-	windows, err := a.windows()
-	if err != nil {
-		return "", err
-	}
-	for _, window := range windows {
-		if window.ID == id {
-			return window.Name, nil
-		}
-	}
-	return "", fmt.Errorf("Apex window %s no longer exists", id)
-}
-
-func (a apexClient) removeRule(id string) {
-	if id != "" {
-		_, _ = a.output("", "plumb", "rule", "rm", id)
-	}
-}
-
-func (a apexClient) windowExists(id string) (bool, error) {
-	output, err := a.output("", "win", "list")
-	if err != nil {
-		return false, err
-	}
-	for _, line := range strings.Split(output, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) > 0 && fields[0] == id {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func (a apexClient) selection(id string) (int, int, error) {
-	output, err := a.output("", "sel", id)
-	if err != nil {
-		return 0, 0, err
-	}
-	fields := strings.Fields(output)
-	if len(fields) != 2 {
-		return 0, 0, fmt.Errorf("apex sel returned %q", strings.TrimSpace(output))
-	}
-	q0, err := strconv.Atoi(fields[0])
-	if err != nil {
-		return 0, 0, fmt.Errorf("parsing Apex selection: %w", err)
-	}
-	q1, err := strconv.Atoi(fields[1])
-	if err != nil {
-		return 0, 0, fmt.Errorf("parsing Apex selection: %w", err)
-	}
-	return q0, q1, nil
-}
-
-func (a apexClient) text(id string) (string, error) {
-	return a.output("", "text", "read", id)
-}
-
-func (a apexClient) replaceText(id, text string) error {
-	q0, q1, selectionErr := a.selection(id)
-	if _, err := a.output("", "edit", id, apexReplaceProgram(text)); err != nil {
-		return err
-	}
-	if selectionErr == nil {
-		length := utf8.RuneCountInString(text)
-		q0 = min(q0, length)
-		q1 = min(q1, length)
-		if _, err := a.output("", "sel", id, strconv.Itoa(q0), strconv.Itoa(q1)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func apexReplaceProgram(text string) string {
-	text = strings.NewReplacer(
-		`\`, `\\`,
-		`|`, `\|`,
-		"\n", `\n`,
-	).Replace(text)
-	return ",c|" + text + "|"
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
+type dashboardRequest struct {
+	kind     dashboardRequestKind
+	plumb    apexapi.Plumb
+	response chan bool
 }
 
 func launchDashboard(repo repository, stdout, stderr io.Writer) error {
-	apex, err := newApexClient()
+	executable, err := exec.LookPath("apex")
 	if err != nil {
-		return err
+		return fmt.Errorf("apex is required for 'work dash'")
 	}
 	workExecutable, err := os.Executable()
 	if err != nil {
@@ -204,7 +49,7 @@ func launchDashboard(repo repository, stdout, stderr io.Writer) error {
 	}
 	// Apex's win host owns the window and marks it live, so Del closes the
 	// window and terminates this same work executable cleanly.
-	cmd := exec.Command(apex.executable, "tool", "win", workExecutable, "dash-live")
+	cmd := exec.Command(executable, "tool", "win", workExecutable, "dash-live")
 	cmd.Dir = repo.MainRoot
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -223,9 +68,9 @@ func runDashboardLive(
 	stdout io.Writer,
 	now func() time.Time,
 ) error {
-	apex, err := newApexClient()
-	if err != nil {
-		return err
+	windowID, err := strconv.Atoi(window)
+	if err != nil || windowID < 0 {
+		return fmt.Errorf("invalid Apex window %q", window)
 	}
 	if now == nil {
 		now = time.Now
@@ -234,45 +79,62 @@ func runDashboardLive(
 		return err
 	}
 
-	repo := initial
-	text, err := renderDashboard(repo, store, now(), liveAgentTitles(repo, os.Getenv))
+	tool, err := attachApexTool(fmt.Sprintf("work-dash-%d", os.Getpid()), store.getenv)
 	if err != nil {
 		return err
 	}
-	windowName, err := apex.windowName(window)
-	if err != nil {
-		return err
-	}
-
-	workExecutable, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("locating work executable: %w", err)
-	}
-	rule, err := apex.addExpandRule(windowName, workExecutable)
-	if err != nil {
-		return err
-	}
-	defer apex.removeRule(rule)
-
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		cancel()
+		_ = tool.Close()
+	}()
+	dashboardWindow := tool.Window(windowID)
 	socket := apexSocketPath(store.getenv)
-	session := apexSessionName(store.getenv)
-	toolName := fmt.Sprintf("work-dash-%d", os.Getpid())
-	navigator, err := connectApexTool(socket, session, toolName)
+	session := tool.Session()
+
+	repo := initial
+	text, err := renderDashboard(repo, store, now(), liveAgentTitlesFromTool(repo, tool))
 	if err != nil {
 		return err
 	}
-	defer navigator.Close()
-	navigationRule, err := apex.addAgentNavigationRule(windowName, toolName)
-	if err != nil {
+
+	requests := make(chan dashboardRequest)
+	handler := func(kind dashboardRequestKind) func(apexapi.Plumb) bool {
+		return func(plumb apexapi.Plumb) bool {
+			response := make(chan bool, 1)
+			select {
+			case requests <- dashboardRequest{kind: kind, plumb: plumb, response: response}:
+			case <-ctx.Done():
+				return false
+			}
+			select {
+			case accepted := <-response:
+				return accepted
+			case <-ctx.Done():
+				return false
+			}
+		}
+	}
+	if _, err := tool.Offer(apexapi.Rule{
+		Verb: "Expand", Window: dashboardWindow, Priority: 100,
+	}, handler(dashboardExpandRequest)); err != nil {
 		return err
 	}
-	defer apex.removeRule(navigationRule)
-	refreshRule, err := apex.addRefreshRule(windowName, toolName)
-	if err != nil {
+	if _, err := tool.Offer(apexapi.Rule{
+		Text: "^[[:alnum:]_.+-]+$", Window: dashboardWindow, Priority: 100,
+	}, handler(dashboardNavigationRequest)); err != nil {
 		return err
 	}
-	defer apex.removeRule(refreshRule)
-	navigationEvents := navigator.events
+	if _, err := tool.Offer(apexapi.Rule{
+		Verb: "Get", Window: dashboardWindow, Priority: 100,
+	}, handler(dashboardRefreshRequest)); err != nil {
+		return err
+	}
+
+	serveErrors := make(chan error, 1)
+	go func() {
+		serveErrors <- tool.Serve(ctx)
+	}()
 	if stdin != nil {
 		// The win host treats edits to its body as process input. Dashboard
 		// refreshes replace that body, so keep its pseudo-terminal drained.
@@ -283,8 +145,8 @@ func runDashboardLive(
 	if _, err := fmt.Fprint(stdout, text); err != nil {
 		return fmt.Errorf("writing initial dashboard: %w", err)
 	}
-	waitForDashboardText(apex, window, text, time.Second)
-	_, _ = apex.output("", "sel", window, "0", "0")
+	waitForDashboardText(dashboardWindow, text, time.Second)
+	_ = dashboardWindow.Select(0, 0)
 
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGHUP, syscall.SIGTERM)
@@ -297,53 +159,55 @@ func runDashboardLive(
 		select {
 		case <-signals:
 			return nil
-		case event, ok := <-navigationEvents:
-			if !ok {
-				return fmt.Errorf("Apex dashboard navigation connection closed")
+		case serveErr := <-serveErrors:
+			if serveErr == nil || errors.Is(serveErr, context.Canceled) {
+				return nil
 			}
-			if event.Verb == "Get" {
-				accepted := event.Window == window
-				if err := navigator.acknowledge(event.ID, accepted); err != nil {
-					return err
+			return fmt.Errorf("serving Apex dashboard: %w", serveErr)
+		case request := <-requests:
+			accepted := false
+			var requestErr error
+			switch request.kind {
+			case dashboardExpandRequest:
+				if request.plumb.Window != nil && request.plumb.Window.ID == dashboardWindow.ID {
+					accepted = expandDashboardWindowAtPoint(dashboardWindow, repo, store) == nil
 				}
-				if !accepted {
-					continue
+			case dashboardRefreshRequest:
+				if request.plumb.Window != nil && request.plumb.Window.ID == dashboardWindow.ID {
+					accepted = true
+					refreshed, err := b.open(repo.MainRoot)
+					if err != nil {
+						requestErr = err
+						break
+					}
+					repo = refreshed
+					text, err = renderDashboard(repo, store, now(), liveAgentTitlesFromTool(repo, tool))
+					if err != nil {
+						requestErr = err
+						break
+					}
+					if err := dashboardWindow.Replace(0, apexapi.End, text); err != nil {
+						requestErr = err
+						break
+					}
+					lastText = text
 				}
-				refreshed, err := b.open(repo.MainRoot)
-				if err != nil {
-					return err
+			case dashboardNavigationRequest:
+				var target string
+				target, accepted = dashboardAgentWindow(tool, dashboardWindow, request.plumb, repo, store, socket, session)
+				if accepted {
+					_, requestErr = tool.Open(target, 0)
 				}
-				repo = refreshed
-				text, err = renderDashboard(repo, store, now(), liveAgentTitles(repo, os.Getenv))
-				if err != nil {
-					return err
-				}
-				if err := apex.replaceText(window, text); err != nil {
-					return err
-				}
-				lastText = text
-				continue
 			}
-			if event.Verb != "plumb" {
-				if err := navigator.acknowledge(event.ID, false); err != nil {
-					return err
-				}
-				continue
-			}
-			target, accepted := dashboardAgentWindow(apex, window, event, repo, store, socket, session)
-			if err := navigator.acknowledge(event.ID, accepted); err != nil {
-				return err
-			}
-			if accepted {
-				if err := navigator.gotoWindow(target); err != nil {
-					return err
-				}
+			request.response <- accepted
+			if requestErr != nil {
+				return requestErr
 			}
 			continue
 		case <-ticker.C:
 		}
 
-		exists, err := apex.windowExists(window)
+		exists, err := apexWindowExists(tool, dashboardWindow.ID)
 		if err != nil {
 			return err
 		}
@@ -355,36 +219,49 @@ func runDashboardLive(
 			continue
 		}
 		repo = refreshed
-		text, err = renderDashboard(repo, store, now(), liveAgentTitles(repo, os.Getenv))
+		text, err = renderDashboard(repo, store, now(), liveAgentTitlesFromTool(repo, tool))
 		if err != nil {
 			continue
 		}
 		if text == lastText {
 			continue
 		}
-		if err := apex.replaceText(window, text); err != nil {
+		if err := dashboardWindow.Replace(0, apexapi.End, text); err != nil {
 			return err
 		}
 		lastText = text
 	}
 }
 
+func apexWindowExists(tool *apexapi.Tool, id int) (bool, error) {
+	windows, err := tool.Windows()
+	if err != nil {
+		return false, err
+	}
+	for _, window := range windows {
+		if window.ID == id {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func dashboardAgentWindow(
-	apex apexClient,
-	dashboardWindow string,
-	event apexPlumb,
+	tool *apexapi.Tool,
+	dashboardWindow *apexapi.Window,
+	event apexapi.Plumb,
 	repo repository,
 	store *stateStore,
 	socket, session string,
 ) (string, bool) {
-	if !event.HasAt || event.Window != dashboardWindow {
+	if event.At == nil || event.Window == nil || event.Window.ID != dashboardWindow.ID {
 		return "", false
 	}
-	text, err := apex.text(dashboardWindow)
+	text, err := dashboardWindow.Read()
 	if err != nil {
 		return "", false
 	}
-	path, agent, ok := dashboardAgentAtPoint(text, event.Point, repo.Worktrees)
+	path, agent, ok := dashboardAgentAtPoint(text, event.At.Q0, repo.Worktrees)
 	if !ok || agent != event.Text {
 		return "", false
 	}
@@ -392,7 +269,7 @@ func dashboardAgentWindow(
 	if err != nil || !found {
 		return "", false
 	}
-	windows, err := apex.windows()
+	windows, err := tool.Windows()
 	if err != nil {
 		return "", false
 	}
@@ -405,7 +282,7 @@ func matchingAgentWindow(state agentState, agent, path, socket, session string, 
 		return "", false
 	}
 	for _, candidate := range windows {
-		if candidate.ID == state.ApexWindow && candidate.Live && windowInWorktree(candidate.Name, path) {
+		if strconv.Itoa(candidate.ID) == state.ApexWindow && candidate.Live && windowInWorktree(candidate.Name, path) {
 			return candidate.Name, true
 		}
 	}
@@ -448,10 +325,10 @@ func dashboardAgentAtPoint(text string, point int, worktrees []worktree) (string
 	return "", "", false
 }
 
-func waitForDashboardText(apex apexClient, window, want string, timeout time.Duration) {
+func waitForDashboardText(window *apexapi.Window, want string, timeout time.Duration) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if text, err := apex.text(window); err == nil && text == want {
+		if text, err := window.Read(); err == nil && text == want {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -576,15 +453,24 @@ func dashboardField(value string) string {
 }
 
 func expandDashboardAtPoint(window string, repo repository, store *stateStore) error {
-	apex, err := newApexClient()
+	windowID, err := strconv.Atoi(window)
+	if err != nil || windowID < 0 {
+		return fmt.Errorf("invalid Apex window %q", window)
+	}
+	tool, err := attachApexTool(fmt.Sprintf("work-expand-%d", os.Getpid()), store.getenv)
 	if err != nil {
 		return err
 	}
-	q0, _, err := apex.selection(window)
+	defer tool.Close()
+	return expandDashboardWindowAtPoint(tool.Window(windowID), repo, store)
+}
+
+func expandDashboardWindowAtPoint(window *apexapi.Window, repo repository, store *stateStore) error {
+	q0, _, err := window.Selection()
 	if err != nil {
 		return err
 	}
-	text, err := apex.text(window)
+	text, err := window.Read()
 	if err != nil {
 		return err
 	}
