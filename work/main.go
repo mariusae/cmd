@@ -412,6 +412,9 @@ func (c command) recordAgentStatus(parsed parsedArguments, cwd, home string, get
 		)
 	}
 	apexSocket, apexSession, apexWindow := apexHookLocation(getenv)
+	if apexSession != "" && apexWindow == "" {
+		apexWindow, _ = discoverApexAgentWindow(apexSocket, apexSession, target.Path)
+	}
 	if err := store.update(agentState{
 		WorktreePath:   target.Path,
 		RepositoryRoot: repo.MainRoot,

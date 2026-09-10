@@ -213,3 +213,79 @@ func TestStateStoreBackfillsTranscriptPointerOnExistingEvent(t *testing.T) {
 		t.Fatalf("events = %#v", events)
 	}
 }
+
+func TestStateStoreListsOneSessionChronologicallyAndRecentAgentsInReverse(t *testing.T) {
+	store, err := newStateStore(t.TempDir(), func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(10_000, 0).UTC()
+	root := "/repo"
+	first := agentState{
+		WorktreePath: "/repo-first", RepositoryRoot: root, Agent: "codex",
+	}
+	second := agentState{
+		WorktreePath: "/repo-second", RepositoryRoot: root, Agent: "claude",
+	}
+	other := agentState{
+		WorktreePath: "/other-task", RepositoryRoot: "/other", Agent: "gemini",
+	}
+	updates := []agentState{
+		withEvent(first, "working", "old", now.Add(-3*time.Hour)),
+		withEvent(first, "done", "old", now.Add(-150*time.Minute)),
+		withEvent(first, "working", "current", now.Add(-20*time.Minute)),
+		withEvent(first, "waiting", "current", now.Add(-15*time.Minute)),
+		withEvent(second, "working", "other", now.Add(-10*time.Minute)),
+		withEvent(first, "done", "current", now.Add(-5*time.Minute)),
+		withEvent(other, "working", "elsewhere", now.Add(-time.Minute)),
+	}
+	for _, state := range updates {
+		if err := store.update(state); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	session, err := store.listSessionEvents(first.WorktreePath, first.Agent, "current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(session) != 3 || session[0].Status != "working" ||
+		session[1].Status != "waiting" || session[2].Status != "done" {
+		t.Fatalf("session events = %#v", session)
+	}
+	if session[2].StartedAt != now.Add(-20*time.Minute).Unix() {
+		t.Fatalf("completed event started_at = %d", session[2].StartedAt)
+	}
+
+	recent, err := store.listRecentEvents(root, now.Add(-2*time.Hour).Unix(), 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recent) != 4 {
+		t.Fatalf("recent events = %#v, want four", recent)
+	}
+	wantStatuses := []string{"done", "working", "waiting", "working"}
+	for index, want := range wantStatuses {
+		if recent[index].Status != want {
+			t.Fatalf("recent event %d = %#v, want status %q", index, recent[index], want)
+		}
+		if index > 0 && recent[index-1].CreatedAt < recent[index].CreatedAt {
+			t.Fatalf("recent events are not reverse chronological: %#v", recent)
+		}
+	}
+
+	recent, err = store.listRecentEvents(root, now.Add(-2*time.Hour).Unix(), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recent) != 2 {
+		t.Fatalf("limited recent events = %#v", recent)
+	}
+}
+
+func withEvent(state agentState, status, session string, at time.Time) agentState {
+	state.Status = status
+	state.SessionID = session
+	state.UpdatedAt = at.Unix()
+	return state
+}

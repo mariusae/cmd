@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -131,11 +132,134 @@ func TestRenderDashboardExpansionShowsTransitionHistory(t *testing.T) {
 	}
 }
 
+func TestRenderDashboardSeparatesSessionHistoryFromRecentGlobalEvents(t *testing.T) {
+	home := t.TempDir()
+	store, err := newStateStore(home, func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(10_000, 0).UTC()
+	root := "/repo"
+	firstPath := "/repo-first"
+	secondPath := "/repo-second"
+	first := agentState{WorktreePath: firstPath, RepositoryRoot: root, Agent: "codex"}
+	second := agentState{WorktreePath: secondPath, RepositoryRoot: root, Agent: "claude"}
+	transcript := filepath.Join(t.TempDir(), "current.jsonl")
+	if err := os.WriteFile(transcript, []byte(fmt.Sprintf(
+		`{"timestamp":%q,"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Finished current work."}]}}`+"\n",
+		now.Add(-5*time.Minute).Format(time.RFC3339),
+	)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	first.TranscriptPath = transcript
+	for _, state := range []agentState{
+		withEvent(first, "working", "old", now.Add(-3*time.Hour)),
+		withEvent(first, "done", "old", now.Add(-150*time.Minute)),
+		withEvent(first, "working", "current", now.Add(-20*time.Minute)),
+		withEvent(first, "waiting", "current", now.Add(-15*time.Minute)),
+		withEvent(second, "working", "other", now.Add(-10*time.Minute)),
+		withEvent(first, "done", "current", now.Add(-5*time.Minute)),
+	} {
+		if err := store.update(state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.toggleExpanded(firstPath); err != nil {
+		t.Fatal(err)
+	}
+
+	text, err := renderDashboard(repository{
+		MainRoot: root,
+		Worktrees: []worktree{
+			{Path: root, Main: true},
+			{Path: firstPath},
+			{Path: secondPath},
+		},
+	}, store, now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstStart := strings.Index(text, directoryPath(firstPath)+"\t")
+	secondStart := strings.Index(text, directoryPath(secondPath)+"\t")
+	if firstStart < 0 || secondStart <= firstStart {
+		t.Fatalf("could not isolate expanded session:\n%s", text)
+	}
+	expanded := text[firstStart:secondStart]
+	wantSession := []string{
+		"\t2:26AM working\n",
+		"\t2:31AM waiting\n",
+		"\t2:41AM complete (15m)\n",
+	}
+	last := -1
+	for _, want := range wantSession {
+		position := strings.Index(expanded, want)
+		if position <= last {
+			t.Fatalf("expanded session is missing or unordered at %q:\n%s", want, expanded)
+		}
+		last = position
+	}
+	if strings.Contains(expanded, "11:46PM") || strings.Contains(expanded, "12:16AM") {
+		t.Fatalf("expanded session includes the previous session:\n%s", expanded)
+	}
+	if !strings.Contains(expanded, "\t\tFinished current work.\n") {
+		t.Fatalf("expanded session has no assistant output:\n%s", expanded)
+	}
+
+	wantGlobal := "\n" +
+		directoryPath(firstPath) + "\tcomplete (15m)\t2:41AM\tcodex\n" +
+		"\tFinished current work.\n" +
+		directoryPath(secondPath) + "\tworking\t2:36AM\tclaude\n" +
+		directoryPath(firstPath) + "\twaiting\t2:31AM\tcodex\n" +
+		directoryPath(firstPath) + "\tworking\t2:26AM\tcodex\n"
+	if !strings.HasSuffix(text, wantGlobal) {
+		t.Fatalf("dashboard has no reverse-chronological global events:\n%s", text)
+	}
+}
+
+func TestRenderDashboardCapsRecentEventsAtTwenty(t *testing.T) {
+	store, err := newStateStore(t.TempDir(), func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(10_000, 0).UTC()
+	root := "/repo"
+	for index := 0; index < 21; index++ {
+		state := agentState{
+			WorktreePath:   fmt.Sprintf("/repo-task-%02d", index),
+			RepositoryRoot: root,
+			Status:         "working",
+			Agent:          "codex",
+			SessionID:      fmt.Sprintf("session-%02d", index),
+			UpdatedAt:      now.Add(-time.Duration(index) * time.Minute).Unix(),
+		}
+		if err := store.update(state); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	text, err := renderDashboard(repository{
+		MainRoot: root, Worktrees: []worktree{{Path: root, Main: true}},
+	}, store, now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(text), "\n")
+	if len(lines) != dashboardRecentEventLimit {
+		t.Fatalf("dashboard lines = %d, want %d events:\n%s", len(lines), dashboardRecentEventLimit, text)
+	}
+	if !strings.Contains(lines[0], "/repo-task-00/") ||
+		!strings.Contains(lines[len(lines)-1], "/repo-task-19/") ||
+		strings.Contains(text, "/repo-task-20/") {
+		t.Fatalf("dashboard did not retain the newest 20 events:\n%s", text)
+	}
+}
+
 func TestDashboardWorktreeAtPointIncludesExpandedRows(t *testing.T) {
 	first := "/repo-first"
 	second := "/repo-second"
 	text := directoryPath(first) + "\tworking\t5:17AM\tcodex\n" +
-		"\t5:17AM working\n" + directoryPath(second) + "\tidle\n"
+		"\t5:17AM working\n" + directoryPath(second) + "\tidle\n\n" +
+		directoryPath(first) + "\twaiting\t5:18AM\tcodex\n"
 	worktrees := []worktree{{Path: "/repo", Main: true}, {Path: first}, {Path: second}}
 
 	point := utf8Point(text, "\t2026")
@@ -145,6 +269,10 @@ func TestDashboardWorktreeAtPointIncludesExpandedRows(t *testing.T) {
 	point = utf8Point(text, directoryPath(second))
 	if path, ok := dashboardWorktreeAtPoint(text, point, worktrees); !ok || path != second {
 		t.Fatalf("second row resolved to (%q, %v), want (%q, true)", path, ok, second)
+	}
+	point = strings.LastIndex(text, directoryPath(first))
+	if path, ok := dashboardWorktreeAtPoint(text, point, worktrees); !ok || path != first {
+		t.Fatalf("global event resolved to (%q, %v), want (%q, true)", path, ok, first)
 	}
 }
 
@@ -171,19 +299,19 @@ func TestDashboardAgentAtPointFindsOnlyAgentField(t *testing.T) {
 
 func TestDashboardAgentNavigationSupportsB3AndAgentVerb(t *testing.T) {
 	path := "/repo-task"
-	text := directoryPath(path) + "\tworking\t5:17AM\tcodex\tA title\n"
+	text := directoryPath(path) + "\tworking\t5:17AM\tcodex\tA title\n\t5:18AM activity\n"
 	worktrees := []worktree{{Path: "/repo", Main: true}, {Path: path}}
-	at := &apexapi.Span{Q0: utf8Point(text, "codex"), Q1: utf8Point(text, "codex")}
-
-	for _, event := range []apexapi.Plumb{
-		{Verb: "plumb", Text: "codex", At: at},
-		{Verb: "Agent", At: at},
-	} {
+	events := []apexapi.Plumb{
+		{Verb: "plumb", Text: "codex", At: &apexapi.Span{Q0: utf8Point(text, "codex")}},
+		{Verb: "Agent", At: &apexapi.Span{Q0: len([]rune(text))}},
+	}
+	for _, event := range events {
 		gotPath, agent, ok := dashboardAgentForPlumb(text, event, worktrees)
-		if !ok || gotPath != path || agent != "codex" {
+		if !ok || gotPath != path || (event.Verb == "plumb" && agent != "codex") {
 			t.Fatalf("dashboardAgentForPlumb(%q) = (%q, %q, %v)", event.Verb, gotPath, agent, ok)
 		}
 	}
+	at := &apexapi.Span{Q0: utf8Point(text, "codex")}
 	if _, _, ok := dashboardAgentForPlumb(text, apexapi.Plumb{Verb: "plumb", Text: "claude", At: at}, worktrees); ok {
 		t.Fatal("B3 navigation accepted a different agent")
 	}

@@ -67,16 +67,21 @@ shell and agent names are filtered out in the same way as workmux pane titles.
 
 `work dash` opens a live `MAIN_WORKTREE/-work` window in the current Apex
 session. It lists every linked worktree, including ones with no agent activity,
-and refreshes automatically as worktrees, agent states, and titles change. The
-body contains only the worktree rows; there is no header or dashboard chrome.
+and refreshes automatically as worktrees, agent states, and titles change.
 
 Choose `Expand` from Apex's tools menu with the point on a worktree row (or one
-of its detail rows) to toggle the last five status events in chronological
-order. The expanded section starts with the worktree's notes path, which can be
-opened with B3. Completed events include the corresponding assistant response
-read from the recorded Claude, Codex, Gemini, or OpenCode session transcript
-when it is available, plus the elapsed time from that operation's first
-`working` event. The history continues to update while the dashboard is open.
+of its detail rows) to toggle that agent session's status events in
+chronological order. The expanded section starts with the worktree's notes
+path, which can be opened with B3. Completed events include the corresponding
+assistant response read from the recorded Claude, Codex, Gemini, or OpenCode
+session transcript when it is available, plus the elapsed time from that
+operation's first `working` event. The history continues to update while the
+dashboard is open.
+
+Below the worktree rows, recent activity across all agents appears in reverse
+chronological order without a section header. It includes at most 20 events
+recorded in the last two hours, with the corresponding assistant response under
+each completed event when available.
 When an agent was started from Apex, B3 on its agent name (such as `codex`)
 switches to its originating Apex session and live window. `Agent` in the tools
 menu does the same for the agent name at the current point.

@@ -20,8 +20,9 @@ import (
 )
 
 const (
-	dashboardPollInterval = 500 * time.Millisecond
-	dashboardEventLimit   = 5
+	dashboardPollInterval     = 500 * time.Millisecond
+	dashboardRecentEventAge   = 2 * time.Hour
+	dashboardRecentEventLimit = 20
 )
 
 type dashboardRequestKind int
@@ -277,27 +278,32 @@ func dashboardAgentLocation(
 	if err != nil || !found {
 		return apexAgentLocation{}, false
 	}
-	return matchingAgentLocation(state, agent, socket)
+	if agent != "" && state.Agent != agent {
+		return apexAgentLocation{}, false
+	}
+	return resolveAgentLocation(state, path, socket)
 }
 
 func dashboardAgentForPlumb(text string, event apexapi.Plumb, worktrees []worktree) (string, string, bool) {
 	if event.At == nil {
 		return "", "", false
 	}
-	path, agent, ok := dashboardAgentAtPoint(text, event.At.Q0, worktrees)
-	if !ok {
-		return "", "", false
-	}
 	switch event.Verb {
 	case "Agent":
+		path, ok := dashboardWorktreeAtPoint(text, event.At.Q0, worktrees)
+		return path, "", ok
 	case "plumb":
+		path, agent, ok := dashboardAgentAtPoint(text, event.At.Q0, worktrees)
+		if !ok {
+			return "", "", false
+		}
 		if agent != event.Text {
 			return "", "", false
 		}
+		return path, agent, true
 	default:
 		return "", "", false
 	}
-	return path, agent, true
 }
 
 func matchingAgentLocation(state agentState, agent, socket string) (apexAgentLocation, bool) {
@@ -310,6 +316,25 @@ func matchingAgentLocation(state agentState, agent, socket string) (apexAgentLoc
 		return apexAgentLocation{}, false
 	}
 	return apexAgentLocation{session: state.ApexSession, window: window}, true
+}
+
+func resolveAgentLocation(state agentState, path, socket string) (apexAgentLocation, bool) {
+	if target, ok := matchingAgentLocation(state, state.Agent, socket); ok {
+		return target, true
+	}
+	if state.ApexSession == "" || state.ApexSocket == "" ||
+		filepath.Clean(state.ApexSocket) != filepath.Clean(socket) {
+		return apexAgentLocation{}, false
+	}
+	window, ok := discoverApexAgentWindow(state.ApexSocket, state.ApexSession, path)
+	if !ok {
+		return apexAgentLocation{}, false
+	}
+	id, err := strconv.Atoi(window)
+	if err != nil || id <= 0 {
+		return apexAgentLocation{}, false
+	}
+	return apexAgentLocation{session: state.ApexSession, window: id}, true
 }
 
 func dashboardAgentAtPoint(text string, point int, worktrees []worktree) (string, string, bool) {
@@ -386,9 +411,12 @@ func renderDashboard(repo repository, store *stateStore, now time.Time, liveTitl
 		if !expanded[path] {
 			continue
 		}
-		if err := writeWorktreeDetails(&output, worktree, store, now); err != nil {
+		if err := writeWorktreeDetails(&output, worktree, state, store, now); err != nil {
 			return "", err
 		}
+	}
+	if err := writeRecentEvents(&output, repo.MainRoot, store, now); err != nil {
+		return "", err
 	}
 	return output.String(), nil
 }
@@ -404,44 +432,81 @@ func renderWorktreeSummary(worktree worktree, state agentState, exists bool, tit
 	fmt.Fprintf(&output, "note: %s\n", note)
 	fmt.Fprintf(&output, "last change: %s\n", dashboardField(changeTitle))
 	output.WriteString("agent:\n")
-	if err := writeAgentEvents(&output, worktree.Path, store, now); err != nil {
+	if err := writeAgentEvents(&output, worktree.Path, state, store, now); err != nil {
 		return "", err
 	}
 	return output.String(), nil
 }
 
-func writeWorktreeDetails(output *strings.Builder, worktree worktree, store *stateStore, now time.Time) error {
+func writeWorktreeDetails(output *strings.Builder, worktree worktree, state agentState, store *stateStore, now time.Time) error {
 	note, err := ensureNoteFile(store.home, worktree, now)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(output, "\t%s\n", note)
-	return writeAgentEvents(output, worktree.Path, store, now)
+	return writeAgentEvents(output, worktree.Path, state, store, now)
 }
 
-func writeAgentEvents(output *strings.Builder, worktreePath string, store *stateStore, now time.Time) error {
-	events, err := store.listEvents(worktreePath, dashboardEventLimit)
+func writeAgentEvents(output *strings.Builder, worktreePath string, state agentState, store *stateStore, now time.Time) error {
+	events, err := store.listSessionEvents(worktreePath, state.Agent, state.SessionID)
 	if err != nil {
 		return err
 	}
 	for _, event := range events {
-		status := event.Status
-		if status == "done" {
-			status = "complete"
-			if event.StartedAt > 0 {
-				status += " (" + formatOperationDuration(event.StartedAt, event.CreatedAt) + ")"
-			}
-		}
-		fmt.Fprintf(output, "\t%s %s\n", formatEventTime(event.CreatedAt, now), status)
-		if event.Status != "done" {
-			continue
-		}
-		messages, _ := store.transcriptMessages(event)
-		if transcript := transcriptForEvent(messages, event.CreatedAt); transcript != "" {
-			writeIndentedTranscript(output, transcript)
-		}
+		fmt.Fprintf(output, "\t%s %s\n", formatEventTime(event.CreatedAt, now), dashboardEventStatus(event))
+		writeEventTranscript(output, event, store, "\t\t")
 	}
 	return nil
+}
+
+func writeRecentEvents(output *strings.Builder, repositoryRoot string, store *stateStore, now time.Time) error {
+	events, err := store.listRecentEvents(
+		repositoryRoot,
+		now.Add(-dashboardRecentEventAge).Unix(),
+		dashboardRecentEventLimit,
+	)
+	if err != nil {
+		return err
+	}
+	if len(events) == 0 {
+		return nil
+	}
+	if output.Len() > 0 {
+		output.WriteByte('\n')
+	}
+	for _, event := range events {
+		fmt.Fprintf(
+			output,
+			"%s\t%s\t%s\t%s\n",
+			directoryPath(event.WorktreePath),
+			dashboardEventStatus(event),
+			formatEventTime(event.CreatedAt, now),
+			dashboardField(event.Agent),
+		)
+		writeEventTranscript(output, event, store, "\t")
+	}
+	return nil
+}
+
+func dashboardEventStatus(event agentEvent) string {
+	status := event.Status
+	if status == "done" {
+		status = "complete"
+		if event.StartedAt > 0 {
+			status += " (" + formatOperationDuration(event.StartedAt, event.CreatedAt) + ")"
+		}
+	}
+	return status
+}
+
+func writeEventTranscript(output *strings.Builder, event agentEvent, store *stateStore, indent string) {
+	if event.Status != "done" {
+		return
+	}
+	messages, _ := store.transcriptMessages(event)
+	if transcript := transcriptForEvent(messages, event.CreatedAt); transcript != "" {
+		writeIndentedTranscript(output, transcript, indent)
+	}
 }
 
 func worktreeStatusLine(path string, state agentState, exists bool, title string, now time.Time) string {
@@ -457,9 +522,9 @@ func worktreeStatusLine(path string, state agentState, exists bool, title string
 	return strings.Join(fields, "\t")
 }
 
-func writeIndentedTranscript(output *strings.Builder, transcript string) {
+func writeIndentedTranscript(output *strings.Builder, transcript, indent string) {
 	for _, line := range strings.Split(transcript, "\n") {
-		output.WriteString("\t\t")
+		output.WriteString(indent)
 		output.WriteString(line)
 		output.WriteByte('\n')
 	}
@@ -533,9 +598,7 @@ func dashboardWorktreeAtPoint(text string, point int, worktrees []worktree) (str
 		if registeredPath, ok := registered[path]; ok {
 			return registeredPath, true
 		}
-		if index != lineIndex {
-			break
-		}
+		return "", false
 	}
 	return "", false
 }

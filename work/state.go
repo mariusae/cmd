@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS agent_events (
 );
 CREATE INDEX IF NOT EXISTS agent_events_worktree
   ON agent_events (worktree_path, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS agent_events_repository
+  ON agent_events (repository_root, created_at DESC, id DESC);
 CREATE TABLE IF NOT EXISTS dashboard_expansion (
   worktree_path TEXT PRIMARY KEY
 );
@@ -334,6 +336,97 @@ LIMIT %d;
 	}
 	for left, right := 0, len(events)-1; left < right; left, right = left+1, right-1 {
 		events[left], events[right] = events[right], events[left]
+	}
+	return events, nil
+}
+
+func (s *stateStore) listSessionEvents(worktreePath, agent, sessionID string) ([]agentEvent, error) {
+	if err := s.initialize(); err != nil {
+		return nil, err
+	}
+	query := fmt.Sprintf(`
+SELECT e.id, e.worktree_path, e.repository_root, e.status, e.agent, e.session_id,
+       e.transcript_path,
+       CASE WHEN e.status = 'done' THEN COALESCE((
+         SELECT MIN(w.created_at)
+         FROM agent_events AS w
+         WHERE w.worktree_path = e.worktree_path
+           AND w.agent = e.agent
+           AND w.session_id = e.session_id
+           AND w.status = 'working'
+           AND w.id < e.id
+           AND w.id > COALESCE((
+             SELECT MAX(d.id)
+             FROM agent_events AS d
+             WHERE d.worktree_path = e.worktree_path
+               AND d.agent = e.agent
+               AND d.session_id = e.session_id
+               AND d.status = 'done'
+               AND d.id < e.id
+           ), 0)
+       ), 0) ELSE 0 END AS started_at,
+       e.created_at
+FROM agent_events AS e
+WHERE e.worktree_path = %s
+  AND e.agent = %s
+  AND e.session_id = %s
+ORDER BY created_at ASC, id ASC;
+`, sqlString(filepath.Clean(worktreePath)), sqlString(agent), sqlString(sessionID))
+	return s.readEvents(query, "reading agent session history")
+}
+
+func (s *stateStore) listRecentEvents(repositoryRoot string, since int64, limit int) ([]agentEvent, error) {
+	if err := s.initialize(); err != nil {
+		return nil, err
+	}
+	if limit < 1 {
+		return nil, nil
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	query := fmt.Sprintf(`
+SELECT e.id, e.worktree_path, e.repository_root, e.status, e.agent, e.session_id,
+       e.transcript_path,
+       CASE WHEN e.status = 'done' THEN COALESCE((
+         SELECT MIN(w.created_at)
+         FROM agent_events AS w
+         WHERE w.worktree_path = e.worktree_path
+           AND w.agent = e.agent
+           AND w.session_id = e.session_id
+           AND w.status = 'working'
+           AND w.id < e.id
+           AND w.id > COALESCE((
+             SELECT MAX(d.id)
+             FROM agent_events AS d
+             WHERE d.worktree_path = e.worktree_path
+               AND d.agent = e.agent
+               AND d.session_id = e.session_id
+               AND d.status = 'done'
+               AND d.id < e.id
+           ), 0)
+       ), 0) ELSE 0 END AS started_at,
+       e.created_at
+FROM agent_events AS e
+WHERE e.repository_root = %s
+  AND e.created_at >= %d
+ORDER BY created_at DESC, id DESC
+LIMIT %d;
+`, sqlString(filepath.Clean(repositoryRoot)), since, limit)
+	return s.readEvents(query, "reading recent agent events")
+}
+
+func (s *stateStore) readEvents(query, action string) ([]agentEvent, error) {
+	output, err := s.executeWithArgs([]string{"-json"}, query)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", action, err)
+	}
+	if len(bytes.TrimSpace(output)) == 0 {
+		return nil, nil
+	}
+	var events []agentEvent
+	if err := json.Unmarshal(output, &events); err != nil {
+		return nil, fmt.Errorf("parsing agent events: %w", err)
 	}
 	return events, nil
 }

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	apexapi "github.com/mariusae/apex/go/apex"
 )
@@ -56,10 +58,49 @@ func apexSocketPath(getenv func(string) string) string {
 }
 
 func attachApexTool(name string, getenv func(string) string) (*apexapi.Tool, error) {
-	return apexapi.Attach(name, &apexapi.Options{
-		Socket:  apexSocketPath(getenv),
-		Session: apexSessionName(getenv),
-	})
+	return attachApexToolAt(name, apexSocketPath(getenv), apexSessionName(getenv))
+}
+
+func attachApexToolAt(name, socket, session string) (*apexapi.Tool, error) {
+	return apexapi.Attach(name, &apexapi.Options{Socket: socket, Session: session})
+}
+
+func discoverApexAgentWindow(socket, session, worktreePath string) (string, bool) {
+	tool, err := attachApexToolAt(fmt.Sprintf("work-agent-%d", os.Getpid()), socket, session)
+	if err != nil {
+		return "", false
+	}
+	defer tool.Close()
+	windows, err := tool.Windows()
+	if err != nil {
+		return "", false
+	}
+	window, ok := apexAgentWindowInWorktree(windows, worktreePath)
+	if !ok {
+		return "", false
+	}
+	return strconv.Itoa(window), true
+}
+
+func apexAgentWindowInWorktree(windows []apexapi.WindowInfo, worktreePath string) (int, bool) {
+	window := 0
+	for _, candidate := range windows {
+		if !candidate.Live || filepath.Base(candidate.Name) == "-work" ||
+			!strings.HasPrefix(filepath.Base(candidate.Name), "-") ||
+			!windowInWorktree(candidate.Name, worktreePath) {
+			continue
+		}
+		if candidate.ID > window {
+			window = candidate.ID
+		}
+	}
+	return window, window > 0
+}
+
+func windowInWorktree(windowName, worktreePath string) bool {
+	directory := filepath.Clean(filepath.Dir(windowName))
+	path := filepath.Clean(worktreePath)
+	return directory == path || strings.HasPrefix(directory, path+string(filepath.Separator))
 }
 
 func apexHookLocation(getenv func(string) string) (socket, session, window string) {
