@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+
+# `ls dir` prints names relative to `dir`, which is annoying when the output is
+# going into another command or being read out of context. `lf` keeps the same
+# basic interface, but always renders each listed entry relative to `$PWD`.
+#
+# Implementation-wise, this does not ask `ls` to recurse into directory
+# arguments. Instead it expands each directory to the entries that `ls` would
+# show, rewrites those paths relative to the current directory, and finally runs
+# `ls -d` on the rewritten paths so `ls` formats them without expanding them a
+# second time.
+set -euo pipefail
+
+show_all=0
+almost_all=0
+directory_mode=0
+parsing_options=1
+indicator_style_set=0
+
+ls_args=()
+paths=()
+entries=()
+
+relative_path() {
+    local path=$1
+
+    if [[ $path == "$PWD" ]]; then
+        printf '.\n'
+        return
+    fi
+
+    if [[ $path == "$PWD"/* ]]; then
+        printf '%s\n' "${path#"$PWD"/}"
+        return
+    fi
+
+    if [[ $path == . ]]; then
+        printf '.\n'
+        return
+    fi
+
+    if [[ $path == ./* ]]; then
+        printf '%s\n' "${path#./}"
+        return
+    fi
+
+    realpath --relative-to="$PWD" --no-symlinks -m "$path"
+}
+
+append_directory_entries() {
+    local dir=$1
+    local item
+    local relative_dir
+
+    shopt -s nullglob
+    relative_dir=$(relative_path "$dir")
+
+    if (( show_all )); then
+        if [[ $relative_dir == . ]]; then
+            entries+=(".")
+            entries+=("..")
+        else
+            entries+=("$relative_dir/.")
+            entries+=("$relative_dir/..")
+        fi
+    fi
+
+    for item in "$dir"/*; do
+        entries+=("$(relative_path "$item")")
+    done
+
+    if (( show_all || almost_all )); then
+        for item in "$dir"/.[!.]* "$dir"/..?*; do
+            entries+=("$(relative_path "$item")")
+        done
+    fi
+
+    shopt -u nullglob
+}
+
+for arg in "$@"; do
+    if (( parsing_options )) && [[ $arg == -- ]]; then
+        parsing_options=0
+        continue
+    fi
+
+    if (( parsing_options )) && [[ $arg == --all ]]; then
+        show_all=1
+        almost_all=0
+        ls_args+=("$arg")
+        continue
+    fi
+
+    if (( parsing_options )) && [[ $arg == --almost-all ]]; then
+        almost_all=1
+        show_all=0
+        ls_args+=("$arg")
+        continue
+    fi
+
+    if (( parsing_options )) && [[ $arg == --directory ]]; then
+        directory_mode=1
+        ls_args+=("$arg")
+        continue
+    fi
+
+    if (( parsing_options )) &&
+        [[ $arg == --classify || $arg == --file-type || $arg == --indicator-style=* ]]; then
+        indicator_style_set=1
+        ls_args+=("$arg")
+        continue
+    fi
+
+    if (( parsing_options )) && [[ $arg == -* && $arg != - ]]; then
+        if [[ $arg == *a* ]]; then
+            show_all=1
+            almost_all=0
+        fi
+
+        if [[ $arg == *A* ]]; then
+            almost_all=1
+            show_all=0
+        fi
+
+        if [[ $arg == *d* ]]; then
+            directory_mode=1
+        fi
+
+        if [[ $arg == *F* || $arg == *p* ]]; then
+            indicator_style_set=1
+        fi
+
+        ls_args+=("$arg")
+        continue
+    fi
+
+    paths+=("$arg")
+done
+
+if (( ${#paths[@]} == 0 )); then
+    paths=(.)
+fi
+
+for path in "${paths[@]}"; do
+    if (( directory_mode )) || [[ ! -d $path ]]; then
+        entries+=("$(relative_path "$path")")
+        continue
+    fi
+
+    append_directory_entries "$path"
+done
+
+if (( ${#entries[@]} == 0 )); then
+    exit 0
+fi
+
+if (( ! indicator_style_set )); then
+    ls_args=(-F "${ls_args[@]}")
+fi
+
+exec ls -d "${ls_args[@]}" -- "${entries[@]}"

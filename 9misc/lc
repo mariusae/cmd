@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+
+# Plan 9's compact, column-oriented directory listing.
+set -euo pipefail
+
+if command -v 9 >/dev/null 2>&1; then
+    9 ls -p "$@" | 9 mc
+    exit
+fi
+
+# Keep lc useful on hosts without plan9port. GNU ls supplies one entry per
+# line; awk applies mc's column-major layout and one-character column gap.
+line_width=${COLUMNS:-}
+if [[ ! $line_width =~ ^[0-9]+$ ]] || (( line_width <= 1 )); then
+    line_width=$(stty size </dev/tty 2>/dev/null | awk '{print $2}') || true
+fi
+if [[ ! $line_width =~ ^[0-9]+$ ]] || (( line_width <= 1 )); then
+    line_width=80
+fi
+
+# shellcheck disable=SC2012 # lc intentionally formats ls output.
+ls -1 --quoting-style=shell-escape "$@" | awk -v line_width="$line_width" '
+    {
+        lines[++count] = $0
+        if (length($0) > max_width)
+            max_width = length($0)
+    }
+
+    END {
+        if (count == 0)
+            exit
+
+        column_width = max_width + 1
+        columns = int(line_width / column_width)
+        if (columns < 1)
+            columns = 1
+        rows = int((count + columns - 1) / columns)
+
+        for (row = 1; row <= rows; row++) {
+            for (item = row; item <= count; item += rows) {
+                printf "%s", lines[item]
+                if (item + rows <= count)
+                    printf "%*s", column_width - length(lines[item]), ""
+            }
+            print ""
+        }
+    }
+'

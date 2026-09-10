@@ -3,7 +3,15 @@
 A collection of small command-line tools. Each tool lives in its own directory.
 
 Run `./update.bash` from the repository root to build every Go command and
-update its Linux binary in `~/bin` with `updatebin`.
+update its Linux binary in `~/bin` with `updatebin`. The script also publishes
+the shell commands in `9misc`.
+
+## `9misc`
+
+`9misc` contains the Plan 9-style command-history helpers `"` and `""`, the
+Plan 9 column-oriented `lc`, and the path-preserving `lf` file lister. See
+[`9misc/README.md`](9misc/README.md) for behavior, dependencies, and
+installation.
 
 ## `where`
 

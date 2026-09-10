@@ -21,3 +21,5 @@ for module in "$SCRIPT_DIR"/*/go.mod; do
         updatebin "$HOME/bin/$command_name" linux "./$command_name"
     )
 done
+
+"$SCRIPT_DIR/9misc/update.bash"

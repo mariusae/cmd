@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+
+# Print commands previously entered in the current Apex, acme, 9term, or tmux
+# window. This is the Plan 9 from User Space `"` command, adapted to work
+# without a separate wintext installation when Apex or tmux is available.
+set -euo pipefail
+
+window_text() {
+    if [[ ${winid:-} =~ ^[0-9]+$ ]] &&
+        [[ -n ${apexsession:-}${APEX_SESSION:-} ]] &&
+        command -v apex >/dev/null 2>&1; then
+        apex text read "$winid"
+        return
+    fi
+
+    if command -v wintext >/dev/null 2>&1; then
+        wintext
+        return
+    fi
+
+    if [[ ${winid:-} =~ ^[0-9]+$ ]] && command -v 9p >/dev/null 2>&1; then
+        9p read "acme/$winid/body"
+        return
+    fi
+
+    if [[ ${text9term:-} == unix\!* ]] && command -v dial >/dev/null 2>&1; then
+        dial -e "$text9term" </dev/null
+        return
+    fi
+
+    if [[ -n ${TMUX:-} ]] && command -v tmux >/dev/null 2>&1; then
+        tmux capture-pane -p
+        return
+    fi
+
+    echo 'no running window found' >&2
+    return 1
+}
+
+prefix=$*
+if (( $# == 0 )); then
+    mode=last
+else
+    mode=matching
+fi
+
+window_text | awk -v mode="$mode" -v prefix="$prefix" '
+    match($0, /^[^ \t]*[%;$#][ \t]+/) {
+        command = substr($0, RSTART + RLENGTH)
+        if (command == "" || substr(command, 1, 1) == "\"")
+            next
+
+        if (mode == "last") {
+            last_command = command
+            found = 1
+            next
+        }
+
+        entry = "\t" command
+        if (entry ~ ("^\t" prefix)) {
+            count++
+            commands[count] = entry
+            last[entry] = count
+        }
+    }
+
+    END {
+        if (mode == "last") {
+            if (found)
+                print "\t" last_command
+            exit
+        }
+
+        # Plan 9 quote1 keeps the newest occurrence of each command, then
+        # presents those occurrences in their original order.
+        for (i = 1; i <= count; i++)
+            if (last[commands[i]] == i)
+                print commands[i]
+    }
+'

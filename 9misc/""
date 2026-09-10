@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+
+# Execute the newest command selected by the companion `"` command.
+set -euo pipefail
+
+if ! quote=$(command -v '"'); then
+    echo 'cannot find " command' >&2
+    exit 1
+fi
+
+command_line=$("$quote" "$@" | tail -n 1)
+command_line=${command_line#$'\t'}
+if [[ -z $command_line ]]; then
+    echo 'no such command found' >&2
+    exit 1
+fi
+
+printf '\t%s\n' "$command_line" >&2
+exec "${RC:-rc}" -c "$command_line"
