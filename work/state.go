@@ -174,8 +174,21 @@ func (s *stateStore) update(state agentState) error {
 		return err
 	}
 	if found {
+		sameAgentSession := state.Agent == existing.Agent &&
+			(state.SessionID == "" || state.SessionID == existing.SessionID)
 		sameStatus := state.Status == existing.Status && state.Agent == existing.Agent &&
 			(state.SessionID == "" || state.SessionID == existing.SessionID)
+		if sameAgentSession {
+			if state.ApexSocket == "" {
+				state.ApexSocket = existing.ApexSocket
+			}
+			if state.ApexSession == "" {
+				state.ApexSession = existing.ApexSession
+			}
+			if state.ApexWindow == "" {
+				state.ApexWindow = existing.ApexWindow
+			}
+		}
 		if state.SessionID == "" {
 			state.SessionID = existing.SessionID
 		}

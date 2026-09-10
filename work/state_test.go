@@ -96,6 +96,43 @@ func TestStateStoreUpsertReplacesPriorState(t *testing.T) {
 	}
 }
 
+func TestStateStorePreservesOriginatingApexLocation(t *testing.T) {
+	store, err := newStateStore(t.TempDir(), func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := agentState{
+		WorktreePath:   "/repo/task",
+		RepositoryRoot: "/repo",
+		Status:         "working",
+		Agent:          "codex",
+		SessionID:      "agent-session",
+		ApexSocket:     "/tmp/apex/main.sock",
+		ApexSession:    "f5f61b53-a693-4803-87d6-b2b1ae1d9b5b",
+		ApexWindow:     "12",
+		UpdatedAt:      1,
+	}
+	if err := store.update(state); err != nil {
+		t.Fatal(err)
+	}
+	state.Status = "done"
+	state.SessionID = ""
+	state.ApexSocket = ""
+	state.ApexSession = ""
+	state.ApexWindow = ""
+	state.UpdatedAt = 2
+	if err := store.update(state); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := store.get(state.WorktreePath)
+	if err != nil || !found {
+		t.Fatalf("get = (%#v, %v, %v)", got, found, err)
+	}
+	if got.ApexSocket != "/tmp/apex/main.sock" || got.ApexSession != "f5f61b53-a693-4803-87d6-b2b1ae1d9b5b" || got.ApexWindow != "12" {
+		t.Fatalf("Apex location = (%q, %q, %q)", got.ApexSocket, got.ApexSession, got.ApexWindow)
+	}
+}
+
 func TestStateStoreDeduplicatesRepeatedEventsAndTogglesExpansion(t *testing.T) {
 	store, err := newStateStore(t.TempDir(), func(string) string { return "" })
 	if err != nil {

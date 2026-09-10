@@ -77,8 +77,9 @@ opened with B3. Completed events include the corresponding assistant response
 read from the recorded Claude, Codex, Gemini, or OpenCode session transcript
 when it is available, plus the elapsed time from that operation's first
 `working` event. The history continues to update while the dashboard is open.
-When an agent is running in the current Apex session, B3 on its agent name
-(such as `codex`) warps to that agent's live window.
+When an agent was started from Apex, B3 on its agent name (such as `codex`)
+switches to its originating Apex session and live window. `Agent` in the tools
+menu does the same for the agent name at the current point.
 `Get` forces an immediate repository and status refresh.
 Deleting the Apex window stops the dashboard process.
 

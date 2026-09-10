@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	apexapi "github.com/mariusae/apex/go/apex"
 )
 
 func TestRenderDashboardShowsPlainWorktreeRows(t *testing.T) {
@@ -167,21 +169,41 @@ func TestDashboardAgentAtPointFindsOnlyAgentField(t *testing.T) {
 	}
 }
 
-func TestMatchingAgentWindowRequiresCurrentLiveApexLocation(t *testing.T) {
+func TestDashboardAgentNavigationSupportsB3AndAgentVerb(t *testing.T) {
+	path := "/repo-task"
+	text := directoryPath(path) + "\tworking\t5:17AM\tcodex\tA title\n"
+	worktrees := []worktree{{Path: "/repo", Main: true}, {Path: path}}
+	at := &apexapi.Span{Q0: utf8Point(text, "codex"), Q1: utf8Point(text, "codex")}
+
+	for _, event := range []apexapi.Plumb{
+		{Verb: "plumb", Text: "codex", At: at},
+		{Verb: "Agent", At: at},
+	} {
+		gotPath, agent, ok := dashboardAgentForPlumb(text, event, worktrees)
+		if !ok || gotPath != path || agent != "codex" {
+			t.Fatalf("dashboardAgentForPlumb(%q) = (%q, %q, %v)", event.Verb, gotPath, agent, ok)
+		}
+	}
+	if _, _, ok := dashboardAgentForPlumb(text, apexapi.Plumb{Verb: "plumb", Text: "claude", At: at}, worktrees); ok {
+		t.Fatal("B3 navigation accepted a different agent")
+	}
+}
+
+func TestMatchingAgentLocationIncludesOriginatingSession(t *testing.T) {
+	const sessionID = "f5f61b53-a693-4803-87d6-b2b1ae1d9b5b"
 	state := agentState{
 		Agent: "codex", ApexSocket: "/tmp/apex/main.sock",
-		ApexSession: "code", ApexWindow: "12",
+		ApexSession: sessionID, ApexWindow: "12",
 	}
-	windows := []apexWindow{{ID: 12, Name: "/repo-task/-codex", Live: true}}
-	if got, ok := matchingAgentWindow(state, "codex", "/repo-task", "/tmp/apex/main.sock", "code", windows); !ok || got != windows[0].Name {
-		t.Fatalf("matchingAgentWindow = (%q, %v)", got, ok)
+	if got, ok := matchingAgentLocation(state, "codex", "/tmp/apex/main.sock"); !ok || got.session != sessionID || got.window != 12 {
+		t.Fatalf("matchingAgentLocation = (%#v, %v)", got, ok)
 	}
-	if _, ok := matchingAgentWindow(state, "codex", "/repo-task", "/tmp/apex/main.sock", "other", windows); ok {
-		t.Fatal("matched an agent from another Apex session")
+	if _, ok := matchingAgentLocation(state, "codex", "/tmp/other-apex/main.sock"); ok {
+		t.Fatal("matched an agent from another Apex daemon")
 	}
-	windows[0].Live = false
-	if _, ok := matchingAgentWindow(state, "codex", "/repo-task", "/tmp/apex/main.sock", "code", windows); ok {
-		t.Fatal("matched a window that is no longer live")
+	state.ApexWindow = "not-a-window"
+	if _, ok := matchingAgentLocation(state, "codex", "/tmp/apex/main.sock"); ok {
+		t.Fatal("matched an invalid Apex window")
 	}
 }
 

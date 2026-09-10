@@ -75,12 +75,6 @@ func agentTitlesFromWindows(repo repository, windows []apexWindow) map[string]st
 	return titles
 }
 
-func windowInWorktree(windowName, worktreePath string) bool {
-	directory := filepath.Clean(filepath.Dir(windowName))
-	path := filepath.Clean(worktreePath)
-	return directory == path || strings.HasPrefix(directory, path+string(filepath.Separator))
-}
-
 func sanitizeAgentTitle(raw, worktree, project string) string {
 	title := strings.TrimSpace(raw)
 	for title != "" {

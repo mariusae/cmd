@@ -38,6 +38,11 @@ type dashboardRequest struct {
 	response chan bool
 }
 
+type apexAgentLocation struct {
+	session string
+	window  int
+}
+
 func launchDashboard(repo repository, stdout, stderr io.Writer) error {
 	executable, err := exec.LookPath("apex")
 	if err != nil {
@@ -90,7 +95,6 @@ func runDashboardLive(
 	}()
 	dashboardWindow := tool.Window(windowID)
 	socket := apexSocketPath(store.getenv)
-	session := tool.Session()
 
 	repo := initial
 	text, err := renderDashboard(repo, store, now(), liveAgentTitlesFromTool(repo, tool))
@@ -122,6 +126,11 @@ func runDashboardLive(
 	}
 	if _, err := tool.Offer(apexapi.Rule{
 		Text: "^[[:alnum:]_.+-]+$", Window: dashboardWindow, Priority: 100,
+	}, handler(dashboardNavigationRequest)); err != nil {
+		return err
+	}
+	if _, err := tool.Offer(apexapi.Rule{
+		Verb: "Agent", Window: dashboardWindow, Priority: 100,
 	}, handler(dashboardNavigationRequest)); err != nil {
 		return err
 	}
@@ -193,10 +202,10 @@ func runDashboardLive(
 					lastText = text
 				}
 			case dashboardNavigationRequest:
-				var target string
-				target, accepted = dashboardAgentWindow(tool, dashboardWindow, request.plumb, repo, store, socket, session)
+				var target apexAgentLocation
+				target, accepted = dashboardAgentLocation(dashboardWindow, request.plumb, repo, store, socket)
 				if accepted {
-					_, requestErr = tool.Open(target, 0)
+					requestErr = tool.Switch(target.session, target.window)
 				}
 			}
 			request.response <- accepted
@@ -246,47 +255,61 @@ func apexWindowExists(tool *apexapi.Tool, id int) (bool, error) {
 	return false, nil
 }
 
-func dashboardAgentWindow(
-	tool *apexapi.Tool,
+func dashboardAgentLocation(
 	dashboardWindow *apexapi.Window,
 	event apexapi.Plumb,
 	repo repository,
 	store *stateStore,
-	socket, session string,
-) (string, bool) {
+	socket string,
+) (apexAgentLocation, bool) {
 	if event.At == nil || event.Window == nil || event.Window.ID != dashboardWindow.ID {
-		return "", false
+		return apexAgentLocation{}, false
 	}
 	text, err := dashboardWindow.Read()
 	if err != nil {
-		return "", false
+		return apexAgentLocation{}, false
 	}
-	path, agent, ok := dashboardAgentAtPoint(text, event.At.Q0, repo.Worktrees)
-	if !ok || agent != event.Text {
-		return "", false
+	path, agent, ok := dashboardAgentForPlumb(text, event, repo.Worktrees)
+	if !ok {
+		return apexAgentLocation{}, false
 	}
 	state, found, err := store.get(path)
 	if err != nil || !found {
-		return "", false
+		return apexAgentLocation{}, false
 	}
-	windows, err := tool.Windows()
-	if err != nil {
-		return "", false
-	}
-	return matchingAgentWindow(state, agent, path, socket, session, windows)
+	return matchingAgentLocation(state, agent, socket)
 }
 
-func matchingAgentWindow(state agentState, agent, path, socket, session string, windows []apexWindow) (string, bool) {
-	if state.Agent != agent || state.ApexWindow == "" || state.ApexSession != session ||
-		state.ApexSocket == "" || filepath.Clean(state.ApexSocket) != filepath.Clean(socket) {
-		return "", false
+func dashboardAgentForPlumb(text string, event apexapi.Plumb, worktrees []worktree) (string, string, bool) {
+	if event.At == nil {
+		return "", "", false
 	}
-	for _, candidate := range windows {
-		if strconv.Itoa(candidate.ID) == state.ApexWindow && candidate.Live && windowInWorktree(candidate.Name, path) {
-			return candidate.Name, true
+	path, agent, ok := dashboardAgentAtPoint(text, event.At.Q0, worktrees)
+	if !ok {
+		return "", "", false
+	}
+	switch event.Verb {
+	case "Agent":
+	case "plumb":
+		if agent != event.Text {
+			return "", "", false
 		}
+	default:
+		return "", "", false
 	}
-	return "", false
+	return path, agent, true
+}
+
+func matchingAgentLocation(state agentState, agent, socket string) (apexAgentLocation, bool) {
+	if state.Agent != agent || state.ApexWindow == "" || state.ApexSession == "" ||
+		state.ApexSocket == "" || filepath.Clean(state.ApexSocket) != filepath.Clean(socket) {
+		return apexAgentLocation{}, false
+	}
+	window, err := strconv.Atoi(state.ApexWindow)
+	if err != nil || window <= 0 {
+		return apexAgentLocation{}, false
+	}
+	return apexAgentLocation{session: state.ApexSession, window: window}, true
 }
 
 func dashboardAgentAtPoint(text string, point int, worktrees []worktree) (string, string, bool) {

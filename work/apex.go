@@ -10,6 +10,13 @@ import (
 )
 
 func apexSessionName(getenv func(string) string) string {
+	if name := apexEnvironmentSession(getenv); name != "" {
+		return name
+	}
+	return "default"
+}
+
+func apexEnvironmentSession(getenv func(string) string) string {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
@@ -19,7 +26,7 @@ func apexSessionName(getenv func(string) string) string {
 	if name := getenv("APEX_SESSION"); name != "" {
 		return name
 	}
-	return "default"
+	return ""
 }
 
 func apexSocketPath(getenv func(string) string) string {
@@ -59,9 +66,17 @@ func apexHookLocation(getenv func(string) string) (socket, session, window strin
 	if getenv == nil {
 		getenv = os.Getenv
 	}
-	window = getenv("winid")
-	if id, err := strconv.Atoi(window); err != nil || id < 0 {
+	// Apex sets apexsession to the immutable session id. APEX_SESSION is a
+	// user-facing default and may only be a reusable label, so it is not an
+	// originating session identity.
+	session = getenv("apexsession")
+	if session == "" {
 		return "", "", ""
 	}
-	return apexSocketPath(getenv), apexSessionName(getenv), window
+	socket = apexSocketPath(getenv)
+	window = getenv("winid")
+	if id, err := strconv.Atoi(window); err != nil || id < 0 {
+		window = ""
+	}
+	return socket, session, window
 }
