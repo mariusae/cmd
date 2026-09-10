@@ -11,6 +11,27 @@ import (
 	apexapi "github.com/mariusae/apex/go/apex"
 )
 
+type recordingDashboardEditor struct {
+	replacements []dashboardEdit
+	selections   [][2]int
+	shownOffsets []int
+}
+
+func (e *recordingDashboardEditor) Replace(q0, q1 int, text string) error {
+	e.replacements = append(e.replacements, dashboardEdit{q0: q0, q1: q1, text: text})
+	return nil
+}
+
+func (e *recordingDashboardEditor) Select(q0, q1 int) error {
+	e.selections = append(e.selections, [2]int{q0, q1})
+	return nil
+}
+
+func (e *recordingDashboardEditor) Show(at int) error {
+	e.shownOffsets = append(e.shownOffsets, at)
+	return nil
+}
+
 func TestRenderDashboardShowsPlainWorktreeRows(t *testing.T) {
 	home := t.TempDir()
 	store, err := newStateStore(home, func(string) string { return "" })
@@ -251,6 +272,111 @@ func TestRenderDashboardCapsRecentEventsAtTwenty(t *testing.T) {
 		!strings.Contains(lines[len(lines)-1], "/repo-task-19/") ||
 		strings.Contains(text, "/repo-task-20/") {
 		t.Fatalf("dashboard did not retain the newest 20 events:\n%s", text)
+	}
+}
+
+func TestRenderDashboardTracksNewestEventLine(t *testing.T) {
+	store, err := newStateStore(t.TempDir(), func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(10_000, 0).UTC()
+	root := "/répo"
+	linked := "/répo-tâche"
+	state := agentState{
+		WorktreePath: linked, RepositoryRoot: root, Status: "working",
+		Agent: "codex", SessionID: "current", UpdatedAt: now.Add(-time.Minute).Unix(),
+	}
+	if err := store.update(state); err != nil {
+		t.Fatal(err)
+	}
+	transcript := filepath.Join(t.TempDir(), "current.jsonl")
+	if err := os.WriteFile(transcript, []byte(fmt.Sprintf(
+		`{"timestamp":%q,"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Newest output."}]}}`+"\n",
+		now.Format(time.RFC3339),
+	)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state.Status = "done"
+	state.TranscriptPath = transcript
+	state.UpdatedAt = now.Unix()
+	if err := store.update(state); err != nil {
+		t.Fatal(err)
+	}
+
+	rendered, err := renderDashboardView(repository{
+		MainRoot: root,
+		Worktrees: []worktree{
+			{Path: root, Main: true},
+			{Path: linked},
+		},
+	}, store, now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rendered.recentEvents == "" || !strings.HasSuffix(rendered.text, rendered.recentEvents) {
+		t.Fatalf("recent events are not the dashboard suffix: %#v", rendered)
+	}
+	prefix := strings.TrimSuffix(rendered.text, rendered.recentEvents)
+	if want := len([]rune(prefix)); rendered.newestEventStart != want {
+		t.Fatalf("newest event start = %d, want %d", rendered.newestEventStart, want)
+	}
+	wantBlock := directoryPath(linked) + "\tcomplete (1m)\t2:46AM\tcodex\n\tNewest output.\n"
+	if got := string([]rune(rendered.text)[rendered.newestEventStart:rendered.newestEventEnd]); got != wantBlock {
+		t.Fatalf("newest event selection = %q, want %q", got, wantBlock)
+	}
+}
+
+func TestUpdateDashboardWindowScrollsWhenRecentEventsChange(t *testing.T) {
+	editor := &recordingDashboardEditor{}
+	previous := dashboardRender{text: "old", recentEvents: "old event\n"}
+	next := dashboardRender{
+		text: "new", recentEvents: "new event\n",
+		newestEventStart: 42, newestEventEnd: 67,
+	}
+	if err := updateDashboardWindow(editor, previous, next); err != nil {
+		t.Fatal(err)
+	}
+	if len(editor.replacements) != 1 {
+		t.Fatalf("replacements = %#v, want one", editor.replacements)
+	}
+	if len(editor.shownOffsets) != 1 || editor.shownOffsets[0] != 42 {
+		t.Fatalf("shown offsets = %#v, want newest event", editor.shownOffsets)
+	}
+	if len(editor.selections) != 1 || editor.selections[0] != [2]int{42, 67} {
+		t.Fatalf("selections = %#v, want complete newest event", editor.selections)
+	}
+
+	editor.shownOffsets = nil
+	editor.selections = nil
+	editor.replacements = nil
+	unchangedEvents := next
+	unchangedEvents.text = "new worktree title\n" + next.recentEvents
+	if err := updateDashboardWindow(editor, next, unchangedEvents); err != nil {
+		t.Fatal(err)
+	}
+	if len(editor.shownOffsets) != 0 {
+		t.Fatalf("unchanged events were shown: %#v", editor.shownOffsets)
+	}
+	if len(editor.selections) != 0 {
+		t.Fatalf("unchanged events were selected: %#v", editor.selections)
+	}
+	if len(editor.replacements) != 1 {
+		t.Fatalf("changed dashboard was not updated: %#v", editor.replacements)
+	}
+}
+
+func TestMinimalDashboardEditUsesCharacterOffsets(t *testing.T) {
+	edit, changed := minimalDashboardEdit("æ status old tail", "æ status new tail")
+	if !changed {
+		t.Fatal("changed dashboard produced no edit")
+	}
+	want := dashboardEdit{q0: 9, q1: 12, text: "new"}
+	if edit != want {
+		t.Fatalf("minimalDashboardEdit = %#v, want %#v", edit, want)
+	}
+	if _, changed := minimalDashboardEdit("same", "same"); changed {
+		t.Fatal("identical dashboards produced an edit")
 	}
 }
 

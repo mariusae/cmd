@@ -286,6 +286,30 @@ FROM agent_status WHERE worktree_path = %s LIMIT 1;
 	return states[0], true, nil
 }
 
+// rememberApexWindow updates only the cached window for the originating Apex
+// session. The session predicates keep a late dashboard lookup from attaching
+// a newer agent invocation to an older window.
+func (s *stateStore) rememberApexWindow(worktreePath, socket, session, window string) error {
+	if window == "" || session == "" {
+		return nil
+	}
+	if err := s.initialize(); err != nil {
+		return err
+	}
+	query := fmt.Sprintf(`
+UPDATE agent_status
+SET apex_window = %s
+WHERE worktree_path = %s
+  AND apex_socket = %s
+  AND apex_session = %s;
+`, sqlString(window), sqlString(filepath.Clean(worktreePath)),
+		sqlString(filepath.Clean(socket)), sqlString(session))
+	if _, err := s.execute(query); err != nil {
+		return fmt.Errorf("remembering Apex agent window: %w", err)
+	}
+	return nil
+}
+
 func (s *stateStore) listEvents(worktreePath string, limit int) ([]agentEvent, error) {
 	if err := s.initialize(); err != nil {
 		return nil, err

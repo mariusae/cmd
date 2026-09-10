@@ -207,20 +207,11 @@ func (c command) run(args []string) int {
 		}
 		return 0
 	case "dash":
-		if err := launchDashboard(resolved.repo, c.stdout, c.stderr); err != nil {
-			return c.fail(err)
-		}
-		return 0
-	case "dash-live":
 		store, err := newStateStore(home, getenv)
 		if err != nil {
 			return c.fail(err)
 		}
-		window := getenv("winid")
-		if window == "" {
-			return c.fail(fmt.Errorf("dash-live must run inside an Apex win tool"))
-		}
-		if err := runDashboardLive(c.backend, resolved.repo, store, window, c.stdin, c.stdout, c.now); err != nil {
+		if err := launchDashboard(c.backend, resolved.repo, store, c.now); err != nil {
 			return c.fail(err)
 		}
 		return 0
@@ -323,9 +314,6 @@ func parseArgs(args []string) (parsedArguments, bool) {
 			parsed.argument = args[1]
 		}
 		return parsed, true
-	}
-	if len(args) == 1 && args[0] == "dash-live" {
-		return parsedArguments{action: "dash-live"}, true
 	}
 	if len(args) == 1 && args[0] == "install-hooks" {
 		return parsedArguments{action: "install-hooks"}, true

@@ -65,9 +65,10 @@ shell and agent names are filtered out in the same way as workmux pane titles.
 
 ## Apex dashboard
 
-`work dash` opens a live `MAIN_WORKTREE/-work` window in the current Apex
-session. It lists every linked worktree, including ones with no agent activity,
-and refreshes automatically as worktrees, agent states, and titles change.
+`work dash` directly opens and owns a live `MAIN_WORKTREE/-work` window in the
+current Apex session. It lists every linked worktree, including ones with no
+agent activity, and refreshes automatically as worktrees, agent states, and
+titles change without disturbing the viewport for unrelated updates.
 
 Choose `Expand` from Apex's tools menu with the point on a worktree row (or one
 of its detail rows) to toggle that agent session's status events in
@@ -81,10 +82,14 @@ dashboard is open.
 Below the worktree rows, recent activity across all agents appears in reverse
 chronological order without a section header. It includes at most 20 events
 recorded in the last two hours, with the corresponding assistant response under
-each completed event when available.
+each completed event when available. The dashboard scrolls to the newest event
+when this activity changes and selects its status line and complete response.
 When an agent was started from Apex, B3 on its agent name (such as `codex`)
 switches to its originating Apex session and live window. `Agent` in the tools
-menu does the same for the agent name at the current point.
+menu does the same for the agent name at the current point. The status hook
+records Apex's `winid` directly when it is present. Native terminal shells do
+not receive that variable, so `work` resolves their terminal window in the
+originating session and caches its concrete ID in the status database.
 `Get` forces an immediate repository and status refresh.
 Deleting the Apex window stops the dashboard process.
 

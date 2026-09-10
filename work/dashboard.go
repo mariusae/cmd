@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -44,40 +42,30 @@ type apexAgentLocation struct {
 	window  int
 }
 
-func launchDashboard(repo repository, stdout, stderr io.Writer) error {
-	executable, err := exec.LookPath("apex")
-	if err != nil {
-		return fmt.Errorf("apex is required for 'work dash'")
-	}
-	workExecutable, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("locating work executable: %w", err)
-	}
-	// Apex's win host owns the window and marks it live, so Del closes the
-	// window and terminates this same work executable cleanly.
-	cmd := exec.Command(executable, "tool", "win", workExecutable, "dash-live")
-	cmd.Dir = repo.MainRoot
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("starting Apex dashboard: %w", err)
-	}
-	return nil
+type dashboardRender struct {
+	text             string
+	recentEvents     string
+	newestEventStart int
+	newestEventEnd   int
 }
 
-func runDashboardLive(
+type dashboardWindowEditor interface {
+	Replace(q0, q1 int, text string) error
+	Select(q0, q1 int) error
+	Show(at int) error
+}
+
+type dashboardEdit struct {
+	q0, q1 int
+	text   string
+}
+
+func launchDashboard(
 	b backend,
-	initial repository,
+	repo repository,
 	store *stateStore,
-	window string,
-	stdin io.Reader,
-	stdout io.Writer,
 	now func() time.Time,
 ) error {
-	windowID, err := strconv.Atoi(window)
-	if err != nil || windowID < 0 {
-		return fmt.Errorf("invalid Apex window %q", window)
-	}
 	if now == nil {
 		now = time.Now
 	}
@@ -94,14 +82,36 @@ func runDashboardLive(
 		cancel()
 		_ = tool.Close()
 	}()
-	dashboardWindow := tool.Window(windowID)
 	socket := apexSocketPath(store.getenv)
 
-	repo := initial
-	text, err := renderDashboard(repo, store, now(), liveAgentTitlesFromTool(repo, tool))
+	// Render while the remote UI creates and marks the window live. The render
+	// is local work, so this hides it behind those network round trips.
+	renders := make(chan struct {
+		view dashboardRender
+		err  error
+	}, 1)
+	liveTitles := liveAgentTitlesFromTool(repo, tool)
+	go func() {
+		view, renderErr := renderDashboardView(repo, store, now(), liveTitles)
+		renders <- struct {
+			view dashboardRender
+			err  error
+		}{view: view, err: renderErr}
+	}()
+
+	dashboardName := filepath.Join(repo.MainRoot, "-work")
+	dashboardWindow, err := tool.New(dashboardName)
 	if err != nil {
 		return err
 	}
+	if err := dashboardWindow.SetLive(true); err != nil {
+		return err
+	}
+	renderResult := <-renders
+	if renderResult.err != nil {
+		return renderResult.err
+	}
+	rendered := renderResult.view
 
 	requests := make(chan dashboardRequest)
 	handler := func(kind dashboardRequestKind) func(apexapi.Plumb) bool {
@@ -145,18 +155,12 @@ func runDashboardLive(
 	go func() {
 		serveErrors <- tool.Serve(ctx)
 	}()
-	if stdin != nil {
-		// The win host treats edits to its body as process input. Dashboard
-		// refreshes replace that body, so keep its pseudo-terminal drained.
-		go func() {
-			_, _ = io.Copy(io.Discard, stdin)
-		}()
+	if err := dashboardWindow.Replace(0, apexapi.End, rendered.text); err != nil {
+		return err
 	}
-	if _, err := fmt.Fprint(stdout, text); err != nil {
-		return fmt.Errorf("writing initial dashboard: %w", err)
+	if err := revealNewestDashboardEvent(dashboardWindow, rendered); err != nil {
+		return err
 	}
-	waitForDashboardText(dashboardWindow, text, time.Second)
-	_ = dashboardWindow.Select(0, 0)
 
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGHUP, syscall.SIGTERM)
@@ -164,7 +168,7 @@ func runDashboardLive(
 	ticker := time.NewTicker(dashboardPollInterval)
 	defer ticker.Stop()
 
-	lastText := text
+	lastRender := rendered
 	for {
 		select {
 		case <-signals:
@@ -191,16 +195,16 @@ func runDashboardLive(
 						break
 					}
 					repo = refreshed
-					text, err = renderDashboard(repo, store, now(), liveAgentTitlesFromTool(repo, tool))
+					rendered, err = renderDashboardView(repo, store, now(), liveAgentTitlesFromTool(repo, tool))
 					if err != nil {
 						requestErr = err
 						break
 					}
-					if err := dashboardWindow.Replace(0, apexapi.End, text); err != nil {
+					if err := updateDashboardWindow(dashboardWindow, lastRender, rendered); err != nil {
 						requestErr = err
 						break
 					}
-					lastText = text
+					lastRender = rendered
 				}
 			case dashboardNavigationRequest:
 				var target apexAgentLocation
@@ -229,18 +233,72 @@ func runDashboardLive(
 			continue
 		}
 		repo = refreshed
-		text, err = renderDashboard(repo, store, now(), liveAgentTitlesFromTool(repo, tool))
+		rendered, err = renderDashboardView(repo, store, now(), liveAgentTitlesFromTool(repo, tool))
 		if err != nil {
 			continue
 		}
-		if text == lastText {
+		if rendered.text == lastRender.text {
 			continue
 		}
-		if err := dashboardWindow.Replace(0, apexapi.End, text); err != nil {
+		if err := updateDashboardWindow(dashboardWindow, lastRender, rendered); err != nil {
 			return err
 		}
-		lastText = text
+		lastRender = rendered
 	}
+}
+
+func updateDashboardWindow(
+	window dashboardWindowEditor,
+	previous, next dashboardRender,
+) error {
+	edit, changed := minimalDashboardEdit(previous.text, next.text)
+	if !changed {
+		return nil
+	}
+	if err := window.Replace(edit.q0, edit.q1, edit.text); err != nil {
+		return err
+	}
+	if next.recentEvents == "" || next.recentEvents == previous.recentEvents {
+		return nil
+	}
+	return revealNewestDashboardEvent(window, next)
+}
+
+func revealNewestDashboardEvent(
+	window dashboardWindowEditor,
+	rendered dashboardRender,
+) error {
+	if rendered.recentEvents == "" {
+		return nil
+	}
+	if err := window.Show(rendered.newestEventStart); err != nil {
+		return err
+	}
+	// Select does not alter Apex's viewport, so this keeps the status visible
+	// while highlighting the status and the complete assistant output.
+	return window.Select(rendered.newestEventStart, rendered.newestEventEnd)
+}
+
+func minimalDashboardEdit(before, after string) (dashboardEdit, bool) {
+	if before == after {
+		return dashboardEdit{}, false
+	}
+	oldRunes := []rune(before)
+	newRunes := []rune(after)
+	prefix := 0
+	for prefix < len(oldRunes) && prefix < len(newRunes) && oldRunes[prefix] == newRunes[prefix] {
+		prefix++
+	}
+	suffix := 0
+	for suffix < len(oldRunes)-prefix && suffix < len(newRunes)-prefix &&
+		oldRunes[len(oldRunes)-1-suffix] == newRunes[len(newRunes)-1-suffix] {
+		suffix++
+	}
+	return dashboardEdit{
+		q0:   prefix,
+		q1:   len(oldRunes) - suffix,
+		text: string(newRunes[prefix : len(newRunes)-suffix]),
+	}, true
 }
 
 func apexWindowExists(tool *apexapi.Tool, id int) (bool, error) {
@@ -281,7 +339,18 @@ func dashboardAgentLocation(
 	if agent != "" && state.Agent != agent {
 		return apexAgentLocation{}, false
 	}
-	return resolveAgentLocation(state, path, socket)
+	target, ok := resolveAgentLocation(state, path, socket)
+	if !ok {
+		return apexAgentLocation{}, false
+	}
+	window := strconv.Itoa(target.window)
+	if window != state.ApexWindow {
+		// Native Apex terminals do not inherit winid: Apex starts their shell
+		// before the UI allocates its window. Cache the concrete window once
+		// the target session resolves it so subsequent navigation has the ID.
+		_ = store.rememberApexWindow(path, state.ApexSocket, target.session, window)
+	}
+	return target, true
 }
 
 func dashboardAgentForPlumb(text string, event apexapi.Plumb, worktrees []worktree) (string, string, bool) {
@@ -319,16 +388,13 @@ func matchingAgentLocation(state agentState, agent, socket string) (apexAgentLoc
 }
 
 func resolveAgentLocation(state agentState, path, socket string) (apexAgentLocation, bool) {
-	if target, ok := matchingAgentLocation(state, state.Agent, socket); ok {
-		return target, true
-	}
 	if state.ApexSession == "" || state.ApexSocket == "" ||
 		filepath.Clean(state.ApexSocket) != filepath.Clean(socket) {
 		return apexAgentLocation{}, false
 	}
 	window, ok := discoverApexAgentWindow(state.ApexSocket, state.ApexSession, path)
 	if !ok {
-		return apexAgentLocation{}, false
+		return matchingAgentLocation(state, state.Agent, socket)
 	}
 	id, err := strconv.Atoi(window)
 	if err != nil || id <= 0 {
@@ -373,24 +439,19 @@ func dashboardAgentAtPoint(text string, point int, worktrees []worktree) (string
 	return "", "", false
 }
 
-func waitForDashboardText(window *apexapi.Window, want string, timeout time.Duration) {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if text, err := window.Read(); err == nil && text == want {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+func renderDashboard(repo repository, store *stateStore, now time.Time, liveTitles map[string]string) (string, error) {
+	rendered, err := renderDashboardView(repo, store, now, liveTitles)
+	return rendered.text, err
 }
 
-func renderDashboard(repo repository, store *stateStore, now time.Time, liveTitles map[string]string) (string, error) {
+func renderDashboardView(repo repository, store *stateStore, now time.Time, liveTitles map[string]string) (dashboardRender, error) {
 	states, err := store.list(repo.MainRoot)
 	if err != nil {
-		return "", err
+		return dashboardRender{}, err
 	}
 	expanded, err := store.expandedWorktrees()
 	if err != nil {
-		return "", err
+		return dashboardRender{}, err
 	}
 	byWorktree := statesByWorktree(states)
 
@@ -412,13 +473,29 @@ func renderDashboard(repo repository, store *stateStore, now time.Time, liveTitl
 			continue
 		}
 		if err := writeWorktreeDetails(&output, worktree, state, store, now); err != nil {
-			return "", err
+			return dashboardRender{}, err
 		}
 	}
-	if err := writeRecentEvents(&output, repo.MainRoot, store, now); err != nil {
-		return "", err
+	recentEvents, newestEventLength, err := renderRecentEvents(repo.MainRoot, store, now)
+	if err != nil {
+		return dashboardRender{}, err
 	}
-	return output.String(), nil
+	newestEventStart := 0
+	newestEventEnd := 0
+	if recentEvents != "" {
+		if output.Len() > 0 {
+			output.WriteByte('\n')
+		}
+		newestEventStart = utf8.RuneCountInString(output.String())
+		newestEventEnd = newestEventStart + newestEventLength
+		output.WriteString(recentEvents)
+	}
+	return dashboardRender{
+		text:             output.String(),
+		recentEvents:     recentEvents,
+		newestEventStart: newestEventStart,
+		newestEventEnd:   newestEventEnd,
+	}, nil
 }
 
 func renderWorktreeSummary(worktree worktree, state agentState, exists bool, title string, store *stateStore, now time.Time, changeTitle string) (string, error) {
@@ -459,33 +536,35 @@ func writeAgentEvents(output *strings.Builder, worktreePath string, state agentS
 	return nil
 }
 
-func writeRecentEvents(output *strings.Builder, repositoryRoot string, store *stateStore, now time.Time) error {
+func renderRecentEvents(repositoryRoot string, store *stateStore, now time.Time) (string, int, error) {
 	events, err := store.listRecentEvents(
 		repositoryRoot,
 		now.Add(-dashboardRecentEventAge).Unix(),
 		dashboardRecentEventLimit,
 	)
 	if err != nil {
-		return err
+		return "", 0, err
 	}
 	if len(events) == 0 {
-		return nil
+		return "", 0, nil
 	}
-	if output.Len() > 0 {
-		output.WriteByte('\n')
-	}
-	for _, event := range events {
+	var output strings.Builder
+	newestEventLength := 0
+	for index, event := range events {
 		fmt.Fprintf(
-			output,
+			&output,
 			"%s\t%s\t%s\t%s\n",
 			directoryPath(event.WorktreePath),
 			dashboardEventStatus(event),
 			formatEventTime(event.CreatedAt, now),
 			dashboardField(event.Agent),
 		)
-		writeEventTranscript(output, event, store, "\t")
+		writeEventTranscript(&output, event, store, "\t")
+		if index == 0 {
+			newestEventLength = utf8.RuneCountInString(output.String())
+		}
 	}
-	return nil
+	return output.String(), newestEventLength, nil
 }
 
 func dashboardEventStatus(event agentEvent) string {

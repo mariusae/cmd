@@ -133,6 +133,42 @@ func TestStateStorePreservesOriginatingApexLocation(t *testing.T) {
 	}
 }
 
+func TestStateStoreRemembersResolvedApexWindowForSameSession(t *testing.T) {
+	store, err := newStateStore(t.TempDir(), func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := agentState{
+		WorktreePath: "/repo/task", RepositoryRoot: "/repo", Status: "working",
+		Agent: "codex", SessionID: "agent-session", ApexSocket: "/tmp/apex/main.sock",
+		ApexSession: "apex-session", ApexWindow: "old", UpdatedAt: 123,
+	}
+	if err := store.update(state); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.rememberApexWindow(state.WorktreePath, state.ApexSocket, state.ApexSession, "42"); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := store.get(state.WorktreePath)
+	if err != nil || !found {
+		t.Fatalf("get = (%#v, %v, %v)", got, found, err)
+	}
+	if got.ApexWindow != "42" || got.UpdatedAt != state.UpdatedAt {
+		t.Fatalf("resolved state = %#v, want window 42 and unchanged timestamp", got)
+	}
+
+	if err := store.rememberApexWindow(state.WorktreePath, state.ApexSocket, "stale-session", "99"); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err = store.get(state.WorktreePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ApexWindow != "42" {
+		t.Fatalf("stale session replaced Apex window: %#v", got)
+	}
+}
+
 func TestStateStoreDeduplicatesRepeatedEventsAndTogglesExpansion(t *testing.T) {
 	store, err := newStateStore(t.TempDir(), func(string) string { return "" })
 	if err != nil {

@@ -84,17 +84,41 @@ func discoverApexAgentWindow(socket, session, worktreePath string) (string, bool
 
 func apexAgentWindowInWorktree(windows []apexapi.WindowInfo, worktreePath string) (int, bool) {
 	window := 0
+	bestRank := -1
 	for _, candidate := range windows {
 		if !candidate.Live || filepath.Base(candidate.Name) == "-work" ||
 			!strings.HasPrefix(filepath.Base(candidate.Name), "-") ||
 			!windowInWorktree(candidate.Name, worktreePath) {
 			continue
 		}
-		if candidate.ID > window {
+		rank := apexAgentWindowRank(candidate, worktreePath)
+		if rank > bestRank || rank == bestRank && candidate.ID > window {
 			window = candidate.ID
+			bestRank = rank
 		}
 	}
 	return window, window > 0
+}
+
+func apexAgentWindowRank(window apexapi.WindowInfo, worktreePath string) int {
+	title := strings.TrimPrefix(filepath.Base(window.Name), "-")
+	rank := 0
+	if window.Kind == "term" {
+		rank += 4
+	}
+	if hasAgentActivityMarker(title) {
+		rank += 2
+	}
+	if sanitizeAgentTitle(title, filepath.Base(worktreePath), "") != "" {
+		rank++
+	}
+	return rank
+}
+
+func hasAgentActivityMarker(title string) bool {
+	character, _ := firstRune(title)
+	return character >= '\u2800' && character <= '\u28ff' ||
+		strings.ContainsRune("✳●○◌✓✗", character)
 }
 
 func windowInWorktree(windowName, worktreePath string) bool {
@@ -116,7 +140,7 @@ func apexHookLocation(getenv func(string) string) (socket, session, window strin
 	}
 	socket = apexSocketPath(getenv)
 	window = getenv("winid")
-	if id, err := strconv.Atoi(window); err != nil || id < 0 {
+	if id, err := strconv.Atoi(window); err != nil || id <= 0 {
 		window = ""
 	}
 	return socket, session, window

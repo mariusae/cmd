@@ -23,6 +23,10 @@ func TestApexHookLocation(t *testing.T) {
 	if socket, session, window := apexHookLocation(getenv); socket != environment["APEX_SOCKET"] || session != sessionID || window != "" {
 		t.Fatalf("windowless Apex location = (%q, %q, %q)", socket, session, window)
 	}
+	environment["winid"] = "0"
+	if _, _, window := apexHookLocation(getenv); window != "" {
+		t.Fatalf("top-level Apex winid = %q, want empty", window)
+	}
 	delete(environment, "apexsession")
 	environment["APEX_SESSION"] = "tooling"
 	if socket, session, window := apexHookLocation(getenv); socket != "" || session != "" || window != "" {
@@ -30,16 +34,17 @@ func TestApexHookLocation(t *testing.T) {
 	}
 }
 
-func TestApexAgentWindowInWorktreeUsesNewestLiveToolWindow(t *testing.T) {
+func TestApexAgentWindowInWorktreePrefersActiveNativeTerminal(t *testing.T) {
 	windows := []apexapi.WindowInfo{
-		{ID: 10, Name: "/repo/task/-terminal", Live: true},
-		{ID: 12, Name: "/repo/task/subdir/-agent", Live: true},
+		{ID: 73667279060994, Name: "/repo/task/-devvm", Kind: "file", Live: true},
+		{ID: 1099511627796, Name: "/repo/task/subdir/-project", Kind: "term", Live: true},
+		{ID: 1099511627818, Name: "/repo/task/subdir/-⠸", Kind: "term", Live: true},
 		{ID: 14, Name: "/repo/task/-work", Live: true},
 		{ID: 16, Name: "/repo/task/-stale"},
 		{ID: 18, Name: "/repo/other/-agent", Live: true},
 	}
-	if got, ok := apexAgentWindowInWorktree(windows, "/repo/task"); !ok || got != 12 {
-		t.Fatalf("apexAgentWindowInWorktree = (%d, %v), want (12, true)", got, ok)
+	if got, ok := apexAgentWindowInWorktree(windows, "/repo/task"); !ok || got != 1099511627818 {
+		t.Fatalf("apexAgentWindowInWorktree = (%d, %v), want (1099511627818, true)", got, ok)
 	}
 }
 
