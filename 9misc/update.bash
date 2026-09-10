@@ -5,7 +5,7 @@ set -euo pipefail
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 : "${HOME:?HOME must be set}"
 
-for command_name in '"' '""' lc lf; do
+for command_name in '"' '""' mc lc lf; do
     install_path="$HOME/bin/$command_name"
     legacy_path=
 

@@ -7,6 +7,7 @@ test_dir=$(mktemp -d)
 trap 'rm -rf -- "$test_dir"' EXIT
 quote_command=$script_dir/'"'
 replay_command=$script_dir/'""'
+mc_command=$script_dir/mc
 
 fail() {
     printf 'FAIL: %s\n' "$*" >&2
@@ -37,6 +38,7 @@ not a prompt
 EOF
 
 path="$script_dir:$test_dir/bin:$PATH"
+export PATH="$path"
 got=$(PATH="$path" WINDOW_TEXT="$test_dir/window" "$quote_command")
 assert_equal $'\tgit status' "$got" '" prints the newest command'
 
@@ -84,9 +86,22 @@ mkdir -p "$test_dir/files/columns"
 for name in a bb ccc dddd; do
     : >"$test_dir/files/columns/$name"
 done
-got=$(cd "$test_dir/files" && COLUMNS=10 PATH=/usr/bin:/bin \
-    "$script_dir/lc" columns)
-assert_equal $'a    ccc\nbb   dddd' "$got" 'lc lays out names in Plan 9 column order'
+got=$(
+    cd "$test_dir/files"
+    unset APEX_SESSION apexsession winid termprog
+    MC_COLUMNS=10 "$script_dir/lc" columns
+)
+assert_equal $'a    ccc\nbb   dddd' "$got" 'lc uses mc column-major layout'
+
+got=$(printf 'a\nbb\nccc\ndddd\n' | "$mc_command" -10)
+assert_equal $'a    ccc\nbb   dddd' "$got" 'mc honors an explicit width'
+
+got=$(printf 'a\nbb\nccc\ndddd\n' | \
+    APEX_SESSION=test MC_COLUMNS=16 MC_TABSTOP=4 "$mc_command")
+assert_equal $'a\t\tccc\nbb\t\tdddd' "$got" 'mc emits Apex-tabbed columns'
+
+got=$(printf 'one\ntwo\nhead:\nthree\nfour\n' | "$mc_command" - -80)
+assert_equal $'one two\n\nhead:\nthree four' "$got" 'mc keeps colon headings separate'
 
 mkdir -p "$test_dir/update-bin" "$test_dir/update-home/bin"
 cat >"$test_dir/update-bin/updatebin" <<'EOF'

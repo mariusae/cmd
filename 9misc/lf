@@ -158,4 +158,4 @@ if (( ! indicator_style_set )); then
     ls_args=(-F "${ls_args[@]}")
 fi
 
-exec ls -d "${ls_args[@]}" -- "${entries[@]}"
+exec ls -d "${ls_args[@]}" -1 -- "${entries[@]}"

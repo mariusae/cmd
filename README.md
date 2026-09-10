@@ -9,9 +9,9 @@ the shell commands in `9misc`.
 ## `9misc`
 
 `9misc` contains the Plan 9-style command-history helpers `"` and `""`, the
-Plan 9 column-oriented `lc`, and the path-preserving `lf` file lister. See
-[`9misc/README.md`](9misc/README.md) for behavior, dependencies, and
-installation.
+self-contained `mc` columnator, the column-oriented `lc`, and the
+path-preserving `lf` file lister. See [`9misc/README.md`](9misc/README.md) for
+behavior, dependencies, and installation.
 
 ## `where`
 

@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+
+# A self-contained port of Plan 9's mc columnator. In Apex and Acme it emits
+# tabs so the editor applies its own tab rendering; elsewhere it pads with
+# spaces, as the original does without a window font.
+set -euo pipefail
+
+line_width=
+colon_breaks=0
+force_spaces=0
+files=()
+
+while (( $# > 0 )); do
+    case $1 in
+    --)
+        shift
+        files+=("$@")
+        break
+        ;;
+    -)
+        colon_breaks=1
+        ;;
+    -t)
+        force_spaces=1
+        ;;
+    -[0-9]*)
+        line_width=${1#-}
+        if [[ ! $line_width =~ ^[0-9]+$ ]] || (( line_width <= 1 )); then
+            line_width=80
+        fi
+        ;;
+    *)
+        files+=("$1")
+        ;;
+    esac
+    shift
+done
+
+explicit_width=0
+if [[ -n $line_width ]]; then
+    explicit_width=1
+else
+    line_width=${MC_COLUMNS:-}
+    if [[ ! $line_width =~ ^[0-9]+$ ]] || (( line_width <= 1 )); then
+        line_width=$({ stty size </dev/tty || true; } 2>/dev/null | awk '{print $2}')
+    fi
+    if [[ ! $line_width =~ ^[0-9]+$ ]] || (( line_width <= 1 )); then
+        line_width=${COLUMNS:-80}
+    fi
+    if [[ ! $line_width =~ ^[0-9]+$ ]] || (( line_width <= 1 )); then
+        line_width=80
+    fi
+fi
+
+use_tabs=0
+if (( ! explicit_width && ! force_spaces )) &&
+    [[ -n ${winid:-}${apexsession:-}${APEX_SESSION:-} || ${termprog:-} == 9term ]]; then
+    use_tabs=1
+fi
+
+tab_width=${MC_TABSTOP:-${tabstop:-4}}
+if [[ ! $tab_width =~ ^[0-9]+$ ]] || (( tab_width < 1 )); then
+    tab_width=4
+fi
+
+awk \
+    -v colon_breaks="$colon_breaks" \
+    -v line_width="$line_width" \
+    -v tab_width="$tab_width" \
+    -v use_tabs="$use_tabs" '
+    function next_tab(column) {
+        if (use_tabs)
+            return column + tab_width - (column % tab_width)
+        return column + 1
+    }
+
+    function expand_tabs(text, result, column, i, character) {
+        result = ""
+        column = 0
+        for (i = 1; i <= length(text); i++) {
+            character = substr(text, i, 1)
+            if (character != "\t") {
+                result = result character
+                column++
+                continue
+            }
+            do {
+                result = result " "
+                column++
+            } while (column % 4 != 0)
+        }
+        return result
+    }
+
+    function flush(    column_width, columns, rows, row, item, column, end_column) {
+        if (count == 0)
+            return 0
+
+        column_width = next_tab(max_width)
+        columns = int(line_width / column_width)
+        if (columns < 1)
+            columns = 1
+        rows = int((count + columns - 1) / columns)
+
+        for (row = 1; row <= rows; row++) {
+            column = 0
+            end_column = 0
+            for (item = row; item <= count; item += rows) {
+                end_column += column_width
+                printf "%s", lines[item]
+                column += length(lines[item])
+                if (item + rows <= count) {
+                    if (use_tabs) {
+                        while (column < end_column) {
+                            printf "\t"
+                            column = next_tab(column)
+                        }
+                    } else {
+                        while (column < end_column) {
+                            printf " "
+                            column++
+                        }
+                    }
+                }
+            }
+            print ""
+        }
+
+        delete lines
+        count = 0
+        max_width = 0
+        return 1
+    }
+
+    {
+        line = expand_tabs($0)
+        if (colon_breaks && substr(line, length(line), 1) == ":") {
+            if (flush())
+                print ""
+            print line
+            next
+        }
+        lines[++count] = line
+        if (length(line) > max_width)
+            max_width = length(line)
+    }
+
+    END {
+        flush()
+    }
+' "${files[@]}"
