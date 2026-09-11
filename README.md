@@ -13,6 +13,40 @@ self-contained `mc` columnator, the column-oriented `lc`, and the
 path-preserving `lf` file lister. See [`9misc/README.md`](9misc/README.md) for
 behavior, dependencies, and installation.
 
+## `refl`
+
+`refl` searches and follows a Reflect notes graph: a directory of Markdown
+files, with daily notes in `daily/YYYY-MM-DD.md` and everything else in
+`notes/`. It reads the files directly, with no index and nothing running.
+
+A query prints one matching line per result; `-c` prints the Markdown block
+around each match instead, using the same block rules Reflect uses to show a
+backlink. `-t` prints recent changes out of the graph's git history, and `-a`
+opens an Apex window on the graph: the notes that changed most recently, a page
+at a time, with `Search`, `Timeline`, `Get`, `Backlinks`, `Note`, `Today`,
+`Sync`, and
+`Yesterday`/`Tomorrow` on the daily notes themselves. The window's state is its
+own text — `Get` reads the first line and shows what it says — and the graph is
+synced while the window is open.
+
+A note changed when the last commit that touched it did — a clone or a pull
+rewrites every file time at once — and git's answer is cached per graph.
+
+```sh
+cd refl
+go build
+
+./refl chrysalis
+./refl -c "air traffic" control
+./refl -t
+./refl -a
+```
+
+`refl` uses `$REFLECT_GRAPH`, else the nearest enclosing graph of the working
+directory, else `~/reflect`. Notes marked `private: true` are never listed,
+matched, or printed. See [`refl/README.md`](refl/README.md) or run `refl -help`
+for the block rules, the timeline, and the Apex window.
+
 ## `where`
 
 `where` finds files and directories whose names contain a query. It searches the
