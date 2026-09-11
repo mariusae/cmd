@@ -10,7 +10,7 @@ work rm /data/users/me/fbsource-2026-09-09-test-feature/
 work note
 work install-hooks
 work status
-work dash
+work -a
 ```
 
 Inside a worktree, running `work` without arguments shows its status, notes
@@ -65,7 +65,7 @@ shell and agent names are filtered out in the same way as workmux pane titles.
 
 ## Apex dashboard
 
-`work dash` directly opens and owns a live `MAIN_WORKTREE/-work` window in the
+`work -a` directly opens and owns a live `MAIN_WORKTREE/-work` window in the
 current Apex session. It lists every linked worktree, including ones with no
 agent activity, and refreshes automatically as worktrees, agent states, and
 titles change without disturbing the viewport for unrelated updates.

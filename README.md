@@ -110,7 +110,7 @@ go build
 ./work note
 ./work install-hooks
 ./work status
-./work dash
+./work -a
 ```
 
 See [`work/README.md`](work/README.md) or run `work -help` for configuration,

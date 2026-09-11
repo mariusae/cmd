@@ -20,7 +20,7 @@ Usage:
   work rm [PATH|LABEL]
   work note [PATH|LABEL]
   work status
-  work dash
+  work -a
   work install-hooks
   work -help
 
@@ -37,7 +37,7 @@ Commands:
   note            Create and open the current worktree's notes file in Apex.
   note PATH|LABEL Create and open another worktree's notes file in Apex.
   status          Show the latest agent status for each linked worktree.
-  dash            Open a live worktree and agent dashboard in Apex.
+  -a              Open the live worktree and agent interface in Apex.
   install-hooks   Install status hooks for supported agents.
 
 The ls and new commands print paths with a trailing slash, making their output
@@ -85,7 +85,7 @@ func main() {
 func (c command) run(args []string) int {
 	parsed, ok := parseArgs(args)
 	if !ok {
-		fmt.Fprintln(c.stderr, "usage: work [ls] | work new NAME | work rm [PATH|LABEL] | work note [PATH|LABEL] | work status | work dash | work install-hooks (try 'work -help' for help)")
+		fmt.Fprintln(c.stderr, "usage: work [ls] | work new NAME | work rm [PATH|LABEL] | work note [PATH|LABEL] | work status | work -a | work install-hooks (try 'work -help' for help)")
 		return 2
 	}
 	if parsed.action == "help" {
@@ -305,7 +305,7 @@ func parseArgs(args []string) (parsedArguments, bool) {
 	if len(args) == 1 && args[0] == "status" {
 		return parsedArguments{action: "status"}, true
 	}
-	if len(args) == 1 && args[0] == "dash" {
+	if len(args) == 1 && args[0] == "-a" {
 		return parsedArguments{action: "dash"}, true
 	}
 	if len(args) >= 1 && len(args) <= 2 && args[0] == "note" {

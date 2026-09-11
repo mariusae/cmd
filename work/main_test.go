@@ -380,8 +380,11 @@ func TestParseDashboardCommands(t *testing.T) {
 	if parsed, ok := parseArgs(nil); !ok || parsed.action != "default" {
 		t.Fatalf("parseArgs(nil) = (%#v, %v)", parsed, ok)
 	}
-	if parsed, ok := parseArgs([]string{"dash"}); !ok || parsed.action != "dash" {
-		t.Fatalf("parseArgs(dash) = (%#v, %v)", parsed, ok)
+	if parsed, ok := parseArgs([]string{"-a"}); !ok || parsed.action != "dash" {
+		t.Fatalf("parseArgs(-a) = (%#v, %v)", parsed, ok)
+	}
+	if parsed, ok := parseArgs([]string{"dash"}); ok {
+		t.Fatalf("parseArgs(dash) = (%#v, %v), want invalid", parsed, ok)
 	}
 	if parsed, ok := parseArgs([]string{"dash-expand", "42"}); !ok || parsed.action != "dash-expand" || parsed.argument != "42" {
 		t.Fatalf("parseArgs(dash-expand) = (%#v, %v)", parsed, ok)
