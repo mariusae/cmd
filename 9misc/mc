@@ -63,6 +63,9 @@ if [[ ! $tab_width =~ ^[0-9]+$ ]] || (( tab_width < 1 )); then
     tab_width=4
 fi
 
+# bash 3.2, which is what macOS ships, treats an empty array as unset under
+# `set -u`, so files is expanded with a default; with no file arguments awk
+# reads standard input.
 awk \
     -v colon_breaks="$colon_breaks" \
     -v line_width="$line_width" \
@@ -148,4 +151,4 @@ awk \
     END {
         flush()
     }
-' "${files[@]}"
+' ${files[@]+"${files[@]}"}

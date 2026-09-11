@@ -21,10 +21,32 @@ ls_args=()
 paths=()
 entries=()
 
+# Resolve `.` and `..` without consulting the file system, so that paths that
+# do not exist resolve too and symbolic links are left alone.
+absolute_path() {
+    local path=$1
+    local resolved=
+    local component
+    local components=()
+
+    [[ $path == /* ]] || path=$PWD/$path
+
+    IFS=/ read -r -a components <<<"$path"
+    for component in "${components[@]}"; do
+        case $component in
+            '' | .) ;;
+            ..) resolved=${resolved%/*} ;;
+            *) resolved=$resolved/$component ;;
+        esac
+    done
+
+    printf '%s\n' "${resolved:-/}"
+}
+
 relative_path() {
     local path=$1
 
-    if [[ $path == "$PWD" ]]; then
+    if [[ $path == "$PWD" || $path == . ]]; then
         printf '.\n'
         return
     fi
@@ -34,17 +56,32 @@ relative_path() {
         return
     fi
 
-    if [[ $path == . ]]; then
-        printf '.\n'
-        return
-    fi
-
     if [[ $path == ./* ]]; then
         printf '%s\n' "${path#./}"
         return
     fi
 
-    realpath --relative-to="$PWD" --no-symlinks -m "$path"
+    path=$(absolute_path "$path")
+
+    if [[ $path == "$PWD" ]]; then
+        printf '.\n'
+        return
+    fi
+
+    # Walk up from $PWD until it contains the path, prefixing a `..` for each
+    # level left behind.
+    local prefix=$PWD
+    local up=
+    while [[ $path != "$prefix"/* ]]; do
+        prefix=${prefix%/*}
+        up=$up../
+        if [[ -z $prefix ]]; then
+            printf '%s\n' "$up${path#/}"
+            return
+        fi
+    done
+
+    printf '%s\n' "$up${path#"$prefix"/}"
 }
 
 append_directory_entries() {
@@ -154,8 +191,10 @@ if (( ${#entries[@]} == 0 )); then
     exit 0
 fi
 
+# bash 3.2, which is what macOS ships, treats an empty array as unset under
+# `set -u`, so the arrays are expanded with a default to stay empty there.
 if (( ! indicator_style_set )); then
-    ls_args=(-F "${ls_args[@]}")
+    ls_args=(-F ${ls_args[@]+"${ls_args[@]}"})
 fi
 
-exec ls -d "${ls_args[@]}" -1 -- "${entries[@]}"
+exec ls -d ${ls_args[@]+"${ls_args[@]}"} -1 -- "${entries[@]}"

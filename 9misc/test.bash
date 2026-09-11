@@ -39,6 +39,10 @@ EOF
 
 path="$script_dir:$test_dir/bin:$PATH"
 export PATH="$path"
+
+# The tests drive the commands through the wintext stub above, so a suite run
+# from a real Apex, acme, 9term, or tmux window must not see its window.
+unset APEX_SESSION apexsession winid text9term termprog TMUX
 got=$(PATH="$path" WINDOW_TEXT="$test_dir/window" "$quote_command")
 assert_equal $'\tgit status' "$got" '" prints the newest command'
 
