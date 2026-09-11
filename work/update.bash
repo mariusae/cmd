@@ -19,17 +19,6 @@ trap cleanup EXIT
 BINARY="$BUILD_DIR/work"
 ARCHIVE="$BUILD_DIR/work.tar.gz"
 
-# Re-pin apex to its upstream head, so the build tracks apex rather than
-# whatever was last committed here.
-go get github.com/mariusae/apex/go@latest
-APEX_VERSION="$(go list -m -f '{{.Version}}' github.com/mariusae/apex/go)"
-# go get only appends to go.sum; drop the hashes of the versions it replaced.
-awk -v version="$APEX_VERSION" \
-    '$1 != "github.com/mariusae/apex/go" || $2 == version || $2 == version "/go.mod"' \
-    go.sum >"$BUILD_DIR/go.sum"
-mv -f -- "$BUILD_DIR/go.sum" go.sum
-printf 'using github.com/mariusae/apex/go %s\n' "$APEX_VERSION" >&2
-
 go build -trimpath -o "$BINARY" .
 tar -czf "$ARCHIVE" -C "$BUILD_DIR" work
 
