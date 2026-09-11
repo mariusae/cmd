@@ -16,10 +16,11 @@ Small shell commands inspired by Plan 9 from User Space:
   by default, retaining paths relative to the current directory, and printing
   exactly one entry per line.
 
-Run `./test.bash` to test the commands. Run `./update.bash` to publish Linux
-artifacts with `updatebin` and install their dotslash launchers in `~/bin`.
-When replacing a legacy non-dotslash command, the updater preserves it with a
-`.pre-dotslash` suffix.
+Run `./test.bash` to test the commands. Run `./install.bash` to install them
+directly into `~/bin`, or into `$INSTALL_DIR` if that is set. `./update.bash`
+instead publishes Linux artifacts with `updatebin` and installs their dotslash
+launchers in `~/bin`; when replacing a legacy non-dotslash command, the updater
+preserves it with a `.pre-dotslash` suffix.
 
 The quote commands reproduce plan9port's `quote1` and `quote2`, which its
 installer publishes under the literal names `"` and `""`.

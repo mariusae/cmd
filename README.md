@@ -2,9 +2,12 @@
 
 A collection of small command-line tools. Each tool lives in its own directory.
 
-Run `./update.bash` from the repository root to build every Go command and
-update its Linux binary in `~/bin` with `updatebin`. The script also publishes
-the shell commands in `9misc`.
+Run `./install.bash` from the repository root to build every Go command for the
+local machine and install it, along with the shell commands in `9misc`, into
+`~/bin` — or into `$INSTALL_DIR`, if that is set.
+
+`./update.bash` does the same thing for Meta devservers, where the Linux
+binaries are published with `updatebin` and invoked through dotslash launchers.
 
 ## `9misc`
 
