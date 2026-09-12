@@ -19,7 +19,7 @@ Usage:
   try
   try QUERY
   try -n NAME
-  try -n GIT_URL
+  try -n REPOSITORY
   try -help
 
 Tries live in $TRY_PATH, or $HOME/src/tries when TRY_PATH is not set. Each try
@@ -41,11 +41,22 @@ Creating tries:
 
     try -n newproject
 
-  When the argument to -n is a Git URL, try derives NAME from the repository's
-  owner and name, then clones the repository into the new directory.
+  When the argument to -n names a repository, try derives NAME from the
+  repository's owner and name, then clones the repository into the new
+  directory. OWNER/REPOSITORY is shorthand for a GitHub repository; a leading
+  host clones from that host instead.
 
+    try -n mariusae/cmd
+    try -n github.com/mariusae/cmd
+    try -n gitlab.com/owner/repository
+
+  A URL copied from a browser works too: the path components that follow the
+  repository are ignored, and GitHub URLs are cloned over SSH so that private
+  repositories do not need HTTPS credentials. Every other Git URL is passed to
+  git as given.
+
+    try -n https://github.com/mariusae/cmd/blob/main/try/main.go
     try -n git@github.com:mariusae/cmd.git
-    try -n https://github.com/mariusae/cmd.git
 
 Configuration:
   Override the tries directory by setting TRY_PATH in your shell startup file:
@@ -229,16 +240,14 @@ func createTry(
 	clone func(string, string, io.Writer) error,
 	cloneOutput io.Writer,
 ) (string, error) {
-	name := value
-	isGitURL := looksLikeGitURL(value)
-	if isGitURL {
-		var err error
-		name, err = nameFromGitURL(value)
+	name := normalizeName(value)
+	var source *gitSource
+	if isGitSource(value) {
+		resolved, err := gitSourceFor(value)
 		if err != nil {
 			return "", err
 		}
-	} else {
-		name = normalizeName(name)
+		source, name = &resolved, resolved.name
 	}
 	if err := validateName(name); err != nil {
 		return "", err
@@ -254,8 +263,8 @@ func createTry(
 		return "", err
 	}
 
-	if isGitURL {
-		if err := clone(value, path, cloneOutput); err != nil {
+	if source != nil {
+		if err := clone(source.remote, path, cloneOutput); err != nil {
 			if removeErr := os.RemoveAll(path); removeErr != nil {
 				return "", fmt.Errorf("%w (also could not remove incomplete clone: %v)", err, removeErr)
 			}

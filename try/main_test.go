@@ -228,23 +228,86 @@ func TestTriesPath(t *testing.T) {
 	}
 }
 
-func TestNameFromGitURL(t *testing.T) {
-	tests := map[string]string{
-		"git@github.com:mariusae/cmd.git":        "mariusae-cmd",
-		"https://github.com/mariusae/cmd.git":    "mariusae-cmd",
-		"ssh://git@github.com/mariusae/cmd.git/": "mariusae-cmd",
-		"file:///tmp/owner/repository":           "owner-repository",
+func TestGitSourceFor(t *testing.T) {
+	tests := map[string]gitSource{
+		"git@github.com:mariusae/cmd.git":        {"git@github.com:mariusae/cmd.git", "mariusae-cmd"},
+		"https://github.com/mariusae/cmd.git":    {"git@github.com:mariusae/cmd.git", "mariusae-cmd"},
+		"ssh://git@github.com/mariusae/cmd.git/": {"ssh://git@github.com/mariusae/cmd.git/", "mariusae-cmd"},
+		"file:///tmp/owner/repository":           {"file:///tmp/owner/repository", "owner-repository"},
+
+		"mariusae/over":            {"git@github.com:mariusae/over.git", "mariusae-over"},
+		"mariusae/over/":           {"git@github.com:mariusae/over.git", "mariusae-over"},
+		"mariusae/over.git":        {"git@github.com:mariusae/over.git", "mariusae-over"},
+		"github.com/mariusae/over": {"git@github.com:mariusae/over.git", "mariusae-over"},
+		"gitlab.com/group/sub/repository": {
+			"git@gitlab.com:group/sub/repository.git", "sub-repository",
+		},
+		"github.com/mariusae/over/tree/main/internal": {
+			"git@github.com:mariusae/over.git", "mariusae-over",
+		},
+		"https://github.com/mariusae/over/pull/7": {
+			"git@github.com:mariusae/over.git", "mariusae-over",
+		},
+		"https://github.com/mariusae/over/blob/main/main.go#L10": {
+			"git@github.com:mariusae/over.git", "mariusae-over",
+		},
+		"https://gitlab.com/owner/repository/-/tree/main": {
+			"https://gitlab.com/owner/repository", "owner-repository",
+		},
 	}
 
-	for remote, want := range tests {
-		got, err := nameFromGitURL(remote)
+	for value, want := range tests {
+		got, err := gitSourceFor(value)
 		if err != nil {
-			t.Errorf("nameFromGitURL(%q): %v", remote, err)
+			t.Errorf("gitSourceFor(%q): %v", value, err)
 			continue
 		}
 		if got != want {
-			t.Errorf("nameFromGitURL(%q) = %q, want %q", remote, got, want)
+			t.Errorf("gitSourceFor(%q) = %#v, want %#v", value, got, want)
 		}
+	}
+}
+
+func TestIsGitSource(t *testing.T) {
+	tests := map[string]bool{
+		"git@github.com:mariusae/cmd.git": true,
+		"https://github.com/mariusae/cmd": true,
+		"mariusae/over":                   true,
+		"github.com/mariusae/over":        true,
+		"newproject":                      false,
+		"new project idea":                false,
+		"a/b c":                           false,
+		"/absolute/path":                  false,
+		"./relative":                      false,
+	}
+
+	for value, want := range tests {
+		if got := isGitSource(value); got != want {
+			t.Errorf("isGitSource(%q) = %v, want %v", value, got, want)
+		}
+	}
+}
+
+func TestRunClonesGitHubShorthandIntoNamedTry(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "tries")
+	c, stdout, stderr := testCommand(base)
+	var gotRemote, gotDestination string
+	c.clone = func(remote, destination string, _ io.Writer) error {
+		gotRemote, gotDestination = remote, destination
+		return nil
+	}
+
+	if code := c.run([]string{"-n", "mariusae/over"}); code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
+	}
+
+	want := filepath.Join(base, "2026-09-09-mariusae-over")
+	if gotRemote != "git@github.com:mariusae/over.git" || gotDestination != want {
+		t.Fatalf("clone(%q, %q), want clone(%q, %q)",
+			gotRemote, gotDestination, "git@github.com:mariusae/over.git", want)
+	}
+	if got := stdout.String(); got != directoryPath(want)+"\n" {
+		t.Fatalf("stdout = %q, want %q", got, directoryPath(want)+"\n")
 	}
 }
 
