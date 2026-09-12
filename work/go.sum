@@ -1,5 +1,5 @@
-github.com/mariusae/apex/go v0.0.0-20260911021724-0296d8e212a1 h1:xvallT6EULzBzZLMCxgcxwF8Q3yylDr9E3UJavrk4mU=
-github.com/mariusae/apex/go v0.0.0-20260911021724-0296d8e212a1/go.mod h1:3X3BE1OO1LoFyaZZmJQo/aU99CsiUzzm2GKDlc76wmY=
+github.com/mariusae/apex/go v0.0.0-20260911210449-14681827e2e1 h1:7Jt18e4FxtCv+b2ec76zT5tMLt8pGoEkCmkcmuGdN9M=
+github.com/mariusae/apex/go v0.0.0-20260911210449-14681827e2e1/go.mod h1:3X3BE1OO1LoFyaZZmJQo/aU99CsiUzzm2GKDlc76wmY=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
 gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
 gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
