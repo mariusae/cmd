@@ -78,7 +78,7 @@ func TestCreateNote(t *testing.T) {
 	g := openGraph(root)
 	now := time.Date(2026, 9, 10, 12, 0, 0, 0, time.Local)
 
-	path, err := g.createNote("Air Traffic Control", now)
+	path, at, err := g.createNote("Air Traffic Control", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,6 +88,10 @@ func TestCreateNote(t *testing.T) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// A note that has its title is ready for its body, which is the end.
+	if at != len([]rune(string(content))) {
+		t.Errorf("writing begins at %d, of %d", at, len([]rune(string(content))))
 	}
 	split := splitFrontmatter(string(content))
 	if !strings.Contains(split.raw, "id: ") {
@@ -107,14 +111,14 @@ func TestCreateNoteNeverOverwrites(t *testing.T) {
 	g := openGraph(root)
 	now := time.Now()
 
-	first, err := g.createNote("Taken", now)
+	first, _, err := g.createNote("Taken", now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if filepath.Base(first) != "taken-2.md" {
 		t.Errorf("a taken name steps aside: got %q", filepath.Base(first))
 	}
-	second, err := g.createNote("Taken", now)
+	second, _, err := g.createNote("Taken", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,16 +131,74 @@ func TestCreateNoteNeverOverwrites(t *testing.T) {
 	}
 }
 
-func TestCreateNoteRefusesAnEmptyTitle(t *testing.T) {
-	g := openGraph(testGraph(t, map[string]string{"notes/a.md": "# A\n"}))
-	if _, err := g.createNote("   ", time.Now()); err == nil {
-		t.Error("a note with no title should be refused")
+// A note with no title yet is begun anyway, with the cursor in its open
+// heading, so the first thing typed names it.
+func TestCreateNoteWithoutATitle(t *testing.T) {
+	root := testGraph(t, map[string]string{"notes/a.md": "# A\n"})
+	g := openGraph(root)
+
+	path, at, err := g.createNote("   ", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(root, notesDir, "untitled.md"); path != want {
+		t.Fatalf("path: got %q, want %q", path, want)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := firstHeading(splitFrontmatter(string(content)).body); got != "" {
+		t.Errorf("the heading is open for the writer: got %q", got)
+	}
+	// Writing begins at the end of the heading: what is typed there is a title.
+	runes := []rune(string(content))
+	if at < 0 || at > len(runes) {
+		t.Fatalf("writing begins at %d, of %d", at, len(runes))
+	}
+	if got := string(runes[:at]); !strings.HasSuffix(got, "# ") {
+		t.Errorf("writing begins after %q", got)
+	}
+
+	// Until the heading says otherwise, the graph lists it under its filename.
+	notes, err := g.list()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, subject := range notes {
+		if subject.path == path {
+			found = true
+			if subject.title != "untitled" {
+				t.Errorf("title: got %q, want %q", subject.title, "untitled")
+			}
+		}
+	}
+	if !found {
+		t.Errorf("the note is not in the graph")
+	}
+}
+
+// Two untitled notes are two notes, not one written over twice.
+func TestCreateNoteWithoutATitleNeverOverwrites(t *testing.T) {
+	root := testGraph(t, map[string]string{"notes/a.md": "# A\n"})
+	g := openGraph(root)
+	first, _, err := g.createNote("", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := g.createNote("", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(first) != "untitled.md" || filepath.Base(second) != "untitled-2.md" {
+		t.Errorf("got %q and %q", filepath.Base(first), filepath.Base(second))
 	}
 }
 
 func TestCreateNoteKeepsTheTitleOnOneLine(t *testing.T) {
 	g := openGraph(testGraph(t, map[string]string{"notes/a.md": "# A\n"}))
-	path, err := g.createNote("First line\nsecond line", time.Now())
+	path, _, err := g.createNote("First line\nsecond line", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

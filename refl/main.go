@@ -65,8 +65,10 @@ Apex:
                       graph.
     Backlinks [NOTE]  Open a window on what links to a note: the one named, the
                       one the window holds, or the one under the pointer.
-    Note TITLE        Create notes/<slug>.md for TITLE and open it. With no
-                      title, the selection is one.
+    Note [TITLE]      Create notes/<slug>.md for TITLE and open it, the cursor
+                      in the body. With no title, the selection is one; with
+                      neither, the note is begun untitled and the cursor sits
+                      in its empty heading, so what is typed first names it.
     Today             Open today's daily note.
     Sync              Commit, merge and push the graph now.
 

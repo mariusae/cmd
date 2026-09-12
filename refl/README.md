@@ -124,8 +124,11 @@ command line opens the window already searching.
     Backlinks [NOTE]  Open a window on what links to a note, with the block
                       around each link: the note named, the note the window
                       holds, or the note under the pointer.
-    Note TITLE        Create `notes/<slug>.md` for TITLE and open it. With no
-                      title, the selection is one.
+    Note [TITLE]      Create `notes/<slug>.md` for TITLE and open it, the
+                      cursor in the body. With no title, the selection is one;
+                      with neither, the note is begun untitled and the cursor
+                      sits in its empty heading, so what is typed first names
+                      it.
     Today             Open today's daily note.
     Sync              Commit, merge and push the graph now.
 
@@ -201,6 +204,13 @@ scripts pass through untransliterated. A name already taken takes a numeric
 suffix; nothing is ever overwritten. The note carries a freshly minted
 lowercase ULID `id`, the durable identity Reflect gives a note it creates, so
 the note survives every later rename of its file.
+
+`Note` with no title and nothing swept begins a note before it is named:
+`notes/untitled.md`, its heading left open, and the cursor in it, so the first
+thing typed is the title. The graph lists the note under its filename until the
+heading says otherwise. The filename does not follow the heading afterwards —
+nothing here renames a note — which is the price of starting before there is a
+title.
 
 Reflect normalizes a title to NFC before slugging and this does not, which
 would need a dependency for the one case it changes: a decomposed accent typed

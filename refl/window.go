@@ -335,22 +335,27 @@ func (w *reflWindow) handleSync(apexapi.Plumb) bool {
 	return true
 }
 
-// handleNote writes a note for the title it is given and opens it. The title
-// may follow the verb or be swept in a window, so a phrase already written can
-// become the note it names.
+// handleNote writes a note and opens it with the cursor where writing begins.
+// The title may follow the verb or be swept in a window, so a phrase already
+// written can become the note it names; with neither, the note is begun
+// untitled and the cursor sits in its empty heading, so typing names it.
 func (w *reflWindow) handleNote(plumb apexapi.Plumb) bool {
 	title := strings.TrimSpace(plumb.Text)
 	if title == "" {
 		title = w.selectedText(plumb)
 	}
-	path, err := w.graph.createNote(title, w.now())
+	path, at, err := w.graph.createNote(title, w.now())
 	if err != nil {
 		_ = w.tool.Errors(w.graph.root, "Note: "+err.Error()+"\n")
 		return true
 	}
-	if _, err := w.tool.Open(path, 0); err != nil {
+	window, err := w.tool.Open(path, 0)
+	if err != nil {
 		return false
 	}
+	// A cursor the note is not yet ready for is no loss: the note is written
+	// and open either way, so a session that will not move it is not a failure.
+	_ = window.Select(at, at)
 	w.show("")
 	return true
 }

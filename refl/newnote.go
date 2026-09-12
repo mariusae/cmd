@@ -107,21 +107,33 @@ func bitsAt(bytes []byte, offset int) int {
 	return value
 }
 
-// createNote writes a new note for this title and returns its path. The title
-// is the note's first heading, and the minted id its identity; a name already
-// taken takes a numeric suffix rather than overwriting anything.
-func (g *graph) createNote(title string, now time.Time) (string, error) {
+// createNote writes a new note for this title and returns its path, and the
+// offset in it writing begins at. The title is the note's first heading, and
+// the minted id its identity; a name already taken takes a numeric suffix
+// rather than overwriting anything.
+//
+// The title may be empty, which is a note begun before it is named: the
+// heading is left open for the writer to fill, the file is notes/untitled.md,
+// and the graph lists the note under that filename until the heading says
+// otherwise. The name does not follow the heading afterwards — nothing here
+// renames a note — which is the price of starting before there is a title.
+func (g *graph) createNote(title string, now time.Time) (string, int, error) {
 	title = strings.TrimSpace(title)
-	if title == "" {
-		return "", fmt.Errorf("a note needs a title")
-	}
 	id, err := newNoteID(now)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	dir := filepath.Join(g.root, notesDir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
+		return "", 0, err
+	}
+	body := fmt.Sprintf("---\nid: %s\n---\n\n# %s\n\n", id, headingSafe(title))
+	// Writing begins where the note is unfinished: at the end of an empty
+	// heading, so the first thing typed names the note, and otherwise in the
+	// body below a heading already written, which is the end of the text.
+	at := len([]rune(body))
+	if title == "" {
+		at -= len("\n\n")
 	}
 	slug := slugForTitle(title)
 	for attempt := 1; ; attempt++ {
@@ -137,13 +149,13 @@ func (g *graph) createNote(title string, now time.Time) (string, error) {
 			continue
 		}
 		if err != nil {
-			return "", err
+			return "", 0, err
 		}
-		_, err = fmt.Fprintf(file, "---\nid: %s\n---\n\n# %s\n\n", id, headingSafe(title))
+		_, err = file.WriteString(body)
 		if closeErr := file.Close(); err != nil || closeErr != nil {
-			return "", firstError(err, closeErr)
+			return "", 0, firstError(err, closeErr)
 		}
-		return path, nil
+		return path, at, nil
 	}
 }
 
