@@ -18,6 +18,7 @@ const helpText = `try finds and creates short-lived project directories.
 Usage:
   try
   try QUERY
+  try -s [QUERY]
   try -n NAME
   try -n REPOSITORY
   try -help
@@ -33,6 +34,17 @@ Finding tries:
 
     try md
     try newproject
+
+Showing status:
+  -s follows each path with the version-control state of that try: the position
+  of its branch relative to its upstream — "up to date", "2 ahead", "1 behind",
+  "no upstream", or "detached" — and then the state of its working tree:
+  "clean", or some of "conflicted", "modified", and "untracked". A try that is
+  not a Git repository is reported as such. With no QUERY, -s summarizes the
+  same 20 most recent tries that plain try lists.
+
+    try -s
+    try -s md
 
 Creating tries:
   -n creates a directory named YYYY-MM-DD-NAME and prints its path.
@@ -69,6 +81,7 @@ type command struct {
 	userHomeDir func() (string, error)
 	now         func() time.Time
 	clone       func(string, string, io.Writer) error
+	status      func(string) (string, error)
 	stdout      io.Writer
 	stderr      io.Writer
 }
@@ -79,6 +92,7 @@ func main() {
 		userHomeDir: os.UserHomeDir,
 		now:         time.Now,
 		clone:       cloneGitRepository,
+		status:      gitStatus,
 		stdout:      os.Stdout,
 		stderr:      os.Stderr,
 	}
@@ -105,6 +119,10 @@ func (c command) run(args []string) int {
 		return 0
 	}
 
+	short := len(args) > 0 && args[0] == "-s"
+	if short {
+		args = args[1:]
+	}
 	if len(args) == 0 || (len(args) == 1 && args[0] != "" && !strings.HasPrefix(args[0], "-")) {
 		base, err := triesPath(c.getenv, c.userHomeDir)
 		if err != nil {
@@ -128,13 +146,30 @@ func (c command) run(args []string) int {
 		if query == "" && len(matches) > recentTryLimit {
 			matches = matches[:recentTryLimit]
 		}
-		for _, match := range matches {
-			fmt.Fprintln(c.stdout, directoryPath(match))
+		if !short {
+			for _, match := range matches {
+				fmt.Fprintln(c.stdout, directoryPath(match))
+			}
+			return 0
+		}
+
+		statuses, failures := summarize(matches, c.status)
+		for i, match := range matches {
+			if statuses[i] == "" {
+				continue
+			}
+			fmt.Fprintln(c.stdout, directoryPath(match), statuses[i])
+		}
+		for _, failure := range failures {
+			fmt.Fprintf(c.stderr, "try: %v\n", failure)
+		}
+		if len(failures) > 0 {
+			return 1
 		}
 		return 0
 	}
 
-	fmt.Fprintln(c.stderr, "usage: try [QUERY] | try -n NAME_OR_GIT_URL (try -help for help)")
+	fmt.Fprintln(c.stderr, "usage: try [-s] [QUERY] | try -n NAME_OR_GIT_URL (try -help for help)")
 	return 2
 }
 

@@ -86,9 +86,14 @@ cd try
 go build
 
 ./try md
+./try -s
 ./try -n newproject
 ./try -n git@github.com:mariusae/cmd.git
 ```
+
+`-s` follows each matching path with a short version-control summary — the
+position of the branch relative to its upstream, then the state of the working
+tree — so that a bare `try -s` shows which recent tries still have work in them.
 
 Names containing whitespace are normalized with hyphens, and repeated names on
 the same day receive a numeric suffix rather than reusing an existing directory.

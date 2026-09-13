@@ -75,6 +75,89 @@ func TestRunWithoutQueryListsTwentyMostRecentTries(t *testing.T) {
 	}
 }
 
+func TestRunShortStatusAnnotatesEachMatch(t *testing.T) {
+	base := t.TempDir()
+	makeDir(t, filepath.Join(base, "2026-09-08-mariusae-over"))
+	makeDir(t, filepath.Join(base, "2026-09-07-thunk"))
+	c, stdout, stderr := testCommand(base)
+	c.status = func(path string) (string, error) {
+		if filepath.Base(path) == "2026-09-08-mariusae-over" {
+			return "up to date, untracked", nil
+		}
+		return "2 ahead, clean", nil
+	}
+
+	if code := c.run([]string{"-s"}); code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
+	}
+
+	want := strings.Join([]string{
+		directoryPath(filepath.Join(base, "2026-09-08-mariusae-over")) + " up to date, untracked",
+		directoryPath(filepath.Join(base, "2026-09-07-thunk")) + " 2 ahead, clean",
+		"",
+	}, "\n")
+	if got := stdout.String(); got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestRunShortStatusHonorsQuery(t *testing.T) {
+	base := t.TempDir()
+	makeDir(t, filepath.Join(base, "2026-09-08-mdiff"))
+	makeDir(t, filepath.Join(base, "2026-09-07-other"))
+	c, stdout, stderr := testCommand(base)
+	c.status = func(string) (string, error) { return "up to date, clean", nil }
+
+	if code := c.run([]string{"-s", "mdiff"}); code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
+	}
+	want := directoryPath(filepath.Join(base, "2026-09-08-mdiff")) + " up to date, clean\n"
+	if got := stdout.String(); got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestRunShortStatusReportsFailuresAndKeepsGoing(t *testing.T) {
+	base := t.TempDir()
+	makeDir(t, filepath.Join(base, "2026-09-08-broken"))
+	makeDir(t, filepath.Join(base, "2026-09-07-fine"))
+	c, stdout, stderr := testCommand(base)
+	c.status = func(path string) (string, error) {
+		if filepath.Base(path) == "2026-09-08-broken" {
+			return "", errors.New("git status failed")
+		}
+		return "up to date, clean", nil
+	}
+
+	if code := c.run([]string{"-s"}); code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	want := directoryPath(filepath.Join(base, "2026-09-07-fine")) + " up to date, clean\n"
+	if got := stdout.String(); got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if !strings.Contains(stderr.String(), "git status failed") {
+		t.Fatalf("stderr = %q, want status error", stderr.String())
+	}
+}
+
+func TestRunShortStatusWithoutQueryLimitsToRecentTries(t *testing.T) {
+	base := t.TempDir()
+	for day := 1; day <= recentTryLimit+1; day++ {
+		makeDir(t, filepath.Join(base, testDate.AddDate(0, 0, -day).Format("2006-01-02")+"-project"))
+	}
+	c, stdout, stderr := testCommand(base)
+	c.status = func(string) (string, error) { return "up to date, clean", nil }
+
+	if code := c.run([]string{"-s"}); code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
+	}
+	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	if len(lines) != recentTryLimit {
+		t.Fatalf("printed %d lines, want %d", len(lines), recentTryLimit)
+	}
+}
+
 func TestRunCreatesNamedTryAndNormalizesWhitespace(t *testing.T) {
 	base := filepath.Join(t.TempDir(), "tries")
 	c, stdout, stderr := testCommand(base)
@@ -339,6 +422,7 @@ func testCommand(base string) (command, *bytes.Buffer, *bytes.Buffer) {
 		userHomeDir: func() (string, error) { return "", errors.New("unexpected home lookup") },
 		now:         func() time.Time { return testDate },
 		clone:       func(string, string, io.Writer) error { return errors.New("unexpected clone") },
+		status:      func(string) (string, error) { return "", errors.New("unexpected status") },
 		stdout:      stdout,
 		stderr:      stderr,
 	}, stdout, stderr
