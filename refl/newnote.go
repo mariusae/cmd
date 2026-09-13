@@ -108,34 +108,38 @@ func bitsAt(bytes []byte, offset int) int {
 }
 
 // createNote writes a new note for this title and returns its path, and the
-// offset in it writing begins at. The title is the note's first heading, and
-// the minted id its identity; a name already taken takes a numeric suffix
-// rather than overwriting anything.
+// offset in it writing begins at, which is the body below the heading. The
+// title is the note's first heading, and the minted id its identity; a name
+// already taken takes a numeric suffix rather than overwriting anything.
 //
-// The title may be empty, which is a note begun before it is named: the
-// heading is left open for the writer to fill, the file is notes/untitled.md,
-// and the graph lists the note under that filename until the heading says
-// otherwise. The name does not follow the heading afterwards — nothing here
-// renames a note — which is the price of starting before there is a title.
+// The title is what names the file, so a note begun before it has one is not
+// written here: it is begun in a window of its own, and saveDraft names it
+// when it is Put.
 func (g *graph) createNote(title string, now time.Time) (string, int, error) {
 	title = strings.TrimSpace(title)
 	id, err := newNoteID(now)
 	if err != nil {
 		return "", 0, err
 	}
-	dir := filepath.Join(g.root, notesDir)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	body := fmt.Sprintf("---\nid: %s\n---\n\n# %s\n\n", id, headingSafe(title))
+	// Writing begins below the heading, which is the end of the text.
+	at := len([]rune(body))
+	path, err := g.takeNoteName(slugForTitle(title), body)
+	if err != nil {
 		return "", 0, err
 	}
-	body := fmt.Sprintf("---\nid: %s\n---\n\n# %s\n\n", id, headingSafe(title))
-	// Writing begins where the note is unfinished: at the end of an empty
-	// heading, so the first thing typed names the note, and otherwise in the
-	// body below a heading already written, which is the end of the text.
-	at := len([]rune(body))
-	if title == "" {
-		at -= len("\n\n")
+	return path, at, nil
+}
+
+// takeNoteName makes notes/<slug>.md and writes body to it, returning the
+// path. A name already taken takes a numeric suffix rather than overwriting
+// anything, and the name is held the moment it is chosen, so two notes begun
+// at once are two notes.
+func (g *graph) takeNoteName(slug, body string) (string, error) {
+	dir := filepath.Join(g.root, notesDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
 	}
-	slug := slugForTitle(title)
 	for attempt := 1; ; attempt++ {
 		name := slug
 		if attempt > 1 {
@@ -149,14 +153,69 @@ func (g *graph) createNote(title string, now time.Time) (string, int, error) {
 			continue
 		}
 		if err != nil {
-			return "", 0, err
+			return "", err
 		}
 		_, err = file.WriteString(body)
 		if closeErr := file.Close(); err != nil || closeErr != nil {
-			return "", 0, firstError(err, closeErr)
+			return "", firstError(err, closeErr)
 		}
-		return path, at, nil
+		return path, nil
 	}
+}
+
+// saveDraft writes a note begun before it was named: the title its text
+// carries names the file, and the name is taken as it is chosen, so two drafts
+// saved at once cannot land on one file. The note is written carrying the id a
+// note refl makes is given, and the text as written comes back with the path,
+// for the window to be brought to it and then called by it.
+func (g *graph) saveDraft(text string, now time.Time) (path, saved string, err error) {
+	id, err := newNoteID(now)
+	if err != nil {
+		return "", "", err
+	}
+	saved = withNoteID(text, id)
+	path, err = g.takeNoteName(slugForTitle(draftTitle(text)), saved)
+	if err != nil {
+		return "", "", err
+	}
+	return path, saved, nil
+}
+
+// draftTitle names a note written before it was named, by the heuristic the
+// graph reads any note's title by: a frontmatter `title:`, else the first H1.
+// Where deriveTitle then falls back on the daily date or the file's own name
+// there is neither yet, so the first line of what was written stands in — a
+// note opens with what it is about, and that is what its file is called.
+func draftTitle(text string) string {
+	split := splitFrontmatter(text)
+	if fields := parseFrontmatter(split.raw); fields.title != "" {
+		return fields.title
+	}
+	if heading := firstHeading(split.body); heading != "" {
+		return heading
+	}
+	for _, line := range strings.Split(split.body, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+// withNoteID gives a draft the identity Reflect gives a note it creates. The
+// writer's own frontmatter is kept and the id added to it; text that has an id
+// already, and text that is frontmatter all the way down, are left as they are.
+func withNoteID(text, id string) string {
+	split := splitFrontmatter(text)
+	// splitFrontmatter leaves the offset at zero when there is none to carve.
+	if split.bodyOffset == 0 {
+		return fmt.Sprintf("---\nid: %s\n---\n\n%s", id, strings.TrimLeft(text, "\n"))
+	}
+	if parseFrontmatter(split.raw).id != "" {
+		return text
+	}
+	opening := len(frontmatterOpen.FindString(text))
+	return text[:opening] + fmt.Sprintf("id: %s\n", id) + text[opening:]
 }
 
 // headingSafe keeps a title on one line: a heading is a line, and a newline

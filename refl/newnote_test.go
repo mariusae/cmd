@@ -131,68 +131,98 @@ func TestCreateNoteNeverOverwrites(t *testing.T) {
 	}
 }
 
-// A note with no title yet is begun anyway, with the cursor in its open
-// heading, so the first thing typed names it.
-func TestCreateNoteWithoutATitle(t *testing.T) {
+// A note with no title is not written by createNote at all: it is begun in a
+// draft window, and saveDraft writes it where it belongs when it is Put.
+func TestSaveDraft(t *testing.T) {
 	root := testGraph(t, map[string]string{"notes/a.md": "# A\n"})
 	g := openGraph(root)
 
-	path, at, err := g.createNote("   ", time.Now())
+	path, saved, err := g.saveDraft("# Air Traffic Control\n\nthe body\n", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(root, notesDir, "untitled.md"); path != want {
+	if want := filepath.Join(root, notesDir, "air-traffic-control.md"); path != want {
 		t.Fatalf("path: got %q, want %q", path, want)
 	}
+	// The note is written there, and is what the window is then brought to.
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := firstHeading(splitFrontmatter(string(content)).body); got != "" {
-		t.Errorf("the heading is open for the writer: got %q", got)
+	if string(content) != saved {
+		t.Errorf("the file holds %q, the window %q", content, saved)
 	}
-	// Writing begins at the end of the heading: what is typed there is a title.
-	runes := []rune(string(content))
-	if at < 0 || at > len(runes) {
-		t.Fatalf("writing begins at %d, of %d", at, len(runes))
+	split := splitFrontmatter(saved)
+	if !strings.Contains(split.raw, "id: ") {
+		t.Errorf("frontmatter: got %q", split.raw)
 	}
-	if got := string(runes[:at]); !strings.HasSuffix(got, "# ") {
-		t.Errorf("writing begins after %q", got)
+	if got := strings.TrimSpace(split.body); got != "# Air Traffic Control\n\nthe body" {
+		t.Errorf("body: got %q", got)
 	}
-
-	// Until the heading says otherwise, the graph lists it under its filename.
-	notes, err := g.list()
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, subject := range notes {
-		if subject.path == path {
-			found = true
-			if subject.title != "untitled" {
-				t.Errorf("title: got %q, want %q", subject.title, "untitled")
-			}
-		}
-	}
-	if !found {
-		t.Errorf("the note is not in the graph")
+	// It reads back as the graph sees any other note.
+	if title := deriveTitle("notes/air-traffic-control.md", "", split.body); title != "Air Traffic Control" {
+		t.Errorf("title: got %q", title)
 	}
 }
 
-// Two untitled notes are two notes, not one written over twice.
-func TestCreateNoteWithoutATitleNeverOverwrites(t *testing.T) {
-	root := testGraph(t, map[string]string{"notes/a.md": "# A\n"})
-	g := openGraph(root)
-	first, _, err := g.createNote("", time.Now())
+// Two drafts saved at once are two notes, not one written over twice.
+func TestSaveDraftNeverOverwrites(t *testing.T) {
+	g := openGraph(testGraph(t, map[string]string{"notes/a.md": "# A\n"}))
+	first, _, err := g.saveDraft("", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, _, err := g.createNote("", time.Now())
+	second, _, err := g.saveDraft("", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if filepath.Base(first) != "untitled.md" || filepath.Base(second) != "untitled-2.md" {
 		t.Errorf("got %q and %q", filepath.Base(first), filepath.Base(second))
+	}
+}
+
+func TestDraftTitle(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		text string
+		want string
+	}{
+		{"frontmatter names it", "---\ntitle: Named\n---\n\n# Other\n", "Named"},
+		{"else the first heading", "# Air Traffic Control\n\nbody\n", "Air Traffic Control"},
+		{"a heading below a line still counts", "a line\n\n# Heading\n", "Heading"},
+		{"else the first line written", "the tower is a room\n\nmore\n", "the tower is a room"},
+		{"and nothing is nothing", "\n\n   \n", ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := draftTitle(test.text); got != test.want {
+				t.Errorf("got %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestWithNoteID(t *testing.T) {
+	const id = "01m2bfvc1k3b49v5f9q0pzh37f"
+	for _, test := range []struct {
+		name string
+		text string
+		want string
+	}{
+		{"no frontmatter gets some", "# A\n", "---\nid: " + id + "\n---\n\n# A\n"},
+		{"leading blank lines are not kept", "\n# A\n", "---\nid: " + id + "\n---\n\n# A\n"},
+		{
+			"the writer's own frontmatter is kept",
+			"---\ntitle: A\n---\n\nbody\n",
+			"---\nid: " + id + "\ntitle: A\n---\n\nbody\n",
+		},
+		{"an id already there stands", "---\nid: other\n---\n\nbody\n", "---\nid: other\n---\n\nbody\n"},
+		{"even one YAML reads as a number", "---\nid: 1234\n---\n\nbody\n", "---\nid: 1234\n---\n\nbody\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := withNoteID(test.text, id); got != test.want {
+				t.Errorf("got %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 

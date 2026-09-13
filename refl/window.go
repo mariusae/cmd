@@ -43,6 +43,14 @@ const (
 
 var viewVerbs = []string{searchVerb, timelineVerb}
 
+// The words Apex knows that refl answers to in its own windows. A rule may
+// take one so long as it says which windows it is about, and a handler that
+// refuses hands the word back to Apex, which does with it what it always does.
+const (
+	newVerb = "New"
+	putVerb = "Put"
+)
+
 // A row is what one line of a window's body stands for: a note and the line of
 // it the row came from, or the `more` row that shows the next page.
 type row struct {
@@ -74,16 +82,28 @@ type pane struct {
 	written string
 }
 
+// A draft is a note begun before it was named: the window it is being written
+// in, and the rule by which that window's Put settles where the note belongs.
+type draft struct {
+	window *apexapi.Window
+	rule   apexapi.RuleID
+}
+
 type reflWindow struct {
 	graph *graph
 	tool  *apexapi.Tool
 	now   func() time.Time
+	// owner is the name refl attached under, which is what its own
+	// windows are owned by and what a rule about them names.
+	owner string
 
 	mu   sync.Mutex
 	main *pane
 	// command is the main window's first line: the view it is showing.
 	command string
 	panes   map[int]*pane
+	// drafts are the unnamed notes open, by window.
+	drafts map[int]*draft
 
 	refresh chan struct{}
 	syncing chan struct{}
@@ -92,7 +112,8 @@ type reflWindow struct {
 // openWindow shows the graph in the session until the window is deleted,
 // syncing the graph as it goes.
 func openWindow(g *graph, query string, getenv func(string) string, now func() time.Time) error {
-	tool, err := attachApex(fmt.Sprintf("refl-%d", os.Getpid()), getenv)
+	owner := fmt.Sprintf("refl-%d", os.Getpid())
+	tool, err := attachApex(owner, getenv)
 	if err != nil {
 		return err
 	}
@@ -106,8 +127,10 @@ func openWindow(g *graph, query string, getenv func(string) string, now func() t
 		graph:   g,
 		tool:    tool,
 		now:     now,
+		owner:   owner,
 		command: openingCommand(query),
 		panes:   map[int]*pane{},
+		drafts:  map[int]*draft{},
 		refresh: make(chan struct{}, 1),
 		syncing: make(chan struct{}, 1),
 	}
@@ -121,7 +144,7 @@ func openWindow(g *graph, query string, getenv func(string) string, now func() t
 	if err != nil {
 		return err
 	}
-	if err := window.SetLive(true); err != nil {
+	if err := window.SetOwner(true); err != nil {
 		return err
 	}
 	w.main = &pane{window: window, shown: pageSize}
@@ -201,19 +224,24 @@ func (w *reflWindow) offer(window *apexapi.Window) error {
 		{apexapi.Rule{Verb: "Get", Window: window, Priority: 100}, w.handleGet},
 		{apexapi.Rule{Verb: "Today", Window: window, Priority: 100}, w.handleToday},
 		{apexapi.Rule{Verb: "Sync", Window: window, Priority: 100}, w.handleSync},
-		{apexapi.Rule{Window: window, Text: `^.+$`, Priority: 100}, w.handleLook},
-		{apexapi.Rule{Verb: "Today", File: w.dailyPattern(), Priority: 100}, w.handleToday},
-		{apexapi.Rule{Verb: "Yesterday", File: w.dailyPattern(), Priority: 100}, w.handleStep(-1)},
-		{apexapi.Rule{Verb: "Tomorrow", File: w.dailyPattern(), Priority: 100}, w.handleStep(1)},
-		// Note and Backlinks belong wherever the notes are: the window, and
-		// every note of the graph open in the session. The verb is Note, not
-		// New: New is one of Apex's own commands, and those take every B2
-		// before a tool's verbs are tried, so no tool can answer to that word.
-		{apexapi.Rule{Verb: "Note", Window: window, Priority: 100}, w.handleNote},
-		{apexapi.Rule{Verb: "Note", File: w.notePattern(), Priority: 100}, w.handleNote},
+		// A row is a note wherever refl wrote one: the rule is about the
+		// windows this refl owns, so a backlinks window needs none of its
+		// own, and one thrown away takes no rule with it.
+		{apexapi.Rule{Owner: w.ownPattern(), Text: `^.+$`, Priority: 100}, w.handleLook},
+		// The note verbs are about notes: real files, not a window some
+		// tool made and happened to call one.
+		{apexapi.Rule{Verb: "Today", File: w.dailyPattern(), Owner: apexapi.NoOwner, Priority: 100}, w.handleToday},
+		{apexapi.Rule{Verb: "Yesterday", File: w.dailyPattern(), Owner: apexapi.NoOwner, Priority: 100}, w.handleStep(-1)},
+		{apexapi.Rule{Verb: "Tomorrow", File: w.dailyPattern(), Owner: apexapi.NoOwner, Priority: 100}, w.handleStep(1)},
+		// New and Backlinks belong wherever the notes are: the window, and
+		// every note of the graph open in the session. New is one of Apex's
+		// own words; a rule that says which windows it is about may take it,
+		// and where the notes are it means a note.
+		{apexapi.Rule{Verb: newVerb, Window: window, Priority: 100}, w.handleNew},
+		{apexapi.Rule{Verb: newVerb, File: w.notePattern(), Owner: apexapi.NoOwner, Priority: 100}, w.handleNew},
 		{apexapi.Rule{Verb: "Backlinks", Window: window, Priority: 100}, w.handleBacklinks},
-		{apexapi.Rule{Verb: "Backlinks", File: w.notePattern(), Priority: 100}, w.handleBacklinks},
-		{apexapi.Rule{Verb: "Sync", File: w.notePattern(), Priority: 100}, w.handleSync},
+		{apexapi.Rule{Verb: "Backlinks", File: w.notePattern(), Owner: apexapi.NoOwner, Priority: 100}, w.handleBacklinks},
+		{apexapi.Rule{Verb: "Sync", File: w.notePattern(), Owner: apexapi.NoOwner, Priority: 100}, w.handleSync},
 	}
 	for _, offered := range rules {
 		if _, err := w.tool.Offer(offered.rule, offered.handle); err != nil {
@@ -222,6 +250,10 @@ func (w *reflWindow) offer(window *apexapi.Window) error {
 	}
 	return nil
 }
+
+// ownPattern matches the windows this refl owns, by the name it attached
+// under. Rules about them say so rather than guessing at their names.
+func (w *reflWindow) ownPattern() string { return regexp.QuoteMeta(w.owner) }
 
 // dailyPattern matches the graph's daily notes by name, which is where
 // Yesterday, Today and Tomorrow belong.
@@ -335,18 +367,21 @@ func (w *reflWindow) handleSync(apexapi.Plumb) bool {
 	return true
 }
 
-// handleNote writes a note and opens it with the cursor where writing begins.
+// handleNew writes a note and opens it with the cursor where writing begins.
 // The title may follow the verb or be swept in a window, so a phrase already
-// written can become the note it names; with neither, the note is begun
-// untitled and the cursor sits in its empty heading, so typing names it.
-func (w *reflWindow) handleNote(plumb apexapi.Plumb) bool {
+// written can become the note it names; with neither, the note is begun in a
+// draft window, which is named by what is written in it when it is Put.
+func (w *reflWindow) handleNew(plumb apexapi.Plumb) bool {
 	title := strings.TrimSpace(plumb.Text)
 	if title == "" {
 		title = w.selectedText(plumb)
 	}
+	if title == "" {
+		return w.beginDraft()
+	}
 	path, at, err := w.graph.createNote(title, w.now())
 	if err != nil {
-		_ = w.tool.Errors(w.graph.root, "Note: "+err.Error()+"\n")
+		_ = w.tool.Errors(w.graph.root, newVerb+": "+err.Error()+"\n")
 		return true
 	}
 	window, err := w.tool.Open(path, 0)
@@ -358,6 +393,113 @@ func (w *reflWindow) handleNote(plumb apexapi.Plumb) bool {
 	_ = window.Select(at, at)
 	w.show("")
 	return true
+}
+
+// beginDraft opens a note before there is a title to name its file after: an
+// empty window called after the graph it will join. Nothing is written until
+// it is Put, so a draft thrown away leaves nothing behind — and the writer may
+// open with a heading, a sentence, or whatever comes first.
+//
+// It is not claimed as one of refl's own windows, though refl made it: a draft
+// is a note on its way to being a file, and wants what a file window has —
+// Undo and Redo while it is written, Put in the tag as soon as there is
+// something to save, and Del asking before it throws that away.
+func (w *reflWindow) beginDraft() bool {
+	window, err := w.tool.New(draftName(w.graph.root))
+	if err != nil {
+		return false
+	}
+	// Put is Apex's, and is taken for this one window: the tag offers it as
+	// soon as anything is typed, and it means what putDraft says it means.
+	pending := &draft{window: window}
+	rule, err := w.tool.Offer(
+		// Unlisted: apex puts Put in the tag itself, as it does for any
+		// window with a file behind it, and a second one in the tools menu
+		// would say there were two of them.
+		apexapi.Rule{Verb: putVerb, Window: window, Unlisted: true, Priority: 100},
+		func(plumb apexapi.Plumb) bool { return w.putDraft(pending, plumb) },
+	)
+	if err != nil {
+		_ = window.Delete()
+		return false
+	}
+	w.mu.Lock()
+	pending.rule = rule
+	w.drafts[window.ID] = pending
+	w.mu.Unlock()
+	return true
+}
+
+// draftName is what a draft window is called until its note has a name: the
+// graph it belongs to, and the word that began it.
+func draftName(root string) string { return root + "+" + newVerb }
+
+// putDraft is a draft's own Put: what has been written names the note, and the
+// note is written there. The window is then that note's window — brought to
+// the text as it was written, said to be clean, since what it holds is now
+// what is on disk, and called by the file's name, which is what puts the path
+// in its tag. Refl lets go of it at the same time: an ordinary note window
+// from then on, whose Put is Apex's own. A Put that names a file itself is the
+// writer saying where this goes, and is Apex's alone from the start.
+func (w *reflWindow) putDraft(pending *draft, plumb apexapi.Plumb) bool {
+	if strings.TrimSpace(plumb.Text) != "" {
+		w.release(pending)
+		return false
+	}
+	if err := w.settle(pending); err != nil {
+		// Taken and failed: nothing is written under the draft's own name, and
+		// the draft is still a draft, to be Put again once the trouble is past.
+		_ = w.tool.Errors(w.graph.root, putVerb+": "+err.Error()+"\n")
+		return true
+	}
+	w.release(pending)
+	// The note is in the graph now, and the listing should say so.
+	w.wake()
+	return true
+}
+
+// settle makes a draft window the window of the note it holds: the note is
+// written under the name its own text asks for, with the id a note refl makes
+// carries, and the window is brought to that text, cleaned and renamed. The
+// name comes last: until the window has it nothing is watching the file, so
+// what refl wrote there is never taken for someone else's change and the note
+// is not read back over the writer's hands. A name taken for a note that then
+// could not be settled is given back.
+func (w *reflWindow) settle(pending *draft) error {
+	text, err := pending.window.Read()
+	if err != nil {
+		return err
+	}
+	path, saved, err := w.graph.saveDraft(text, w.now())
+	if err != nil {
+		return err
+	}
+	if from, to, replacement, changed := minimalEdit(text, saved); changed {
+		err = pending.window.Replace(from, to, replacement)
+	}
+	if err == nil {
+		err = pending.window.SetClean()
+	}
+	if err == nil {
+		err = pending.window.Rename(path)
+	}
+	if err != nil {
+		_ = os.Remove(path)
+		return err
+	}
+	return nil
+}
+
+// release lets go of a draft: its rule is withdrawn, so Put in that window
+// means what it means everywhere else.
+func (w *reflWindow) release(pending *draft) {
+	w.mu.Lock()
+	rule := pending.rule
+	delete(w.drafts, pending.window.ID)
+	w.mu.Unlock()
+	if rule != 0 {
+		_ = w.tool.Withdraw(rule)
+	}
 }
 
 // handleBacklinks opens a window of its own on what links to a note: the one
@@ -375,12 +517,9 @@ func (w *reflWindow) handleBacklinks(plumb apexapi.Plumb) bool {
 	if err != nil {
 		return false
 	}
-	if err := window.SetLive(true); err != nil {
-		return false
-	}
-	if _, err := w.tool.Offer(
-		apexapi.Rule{Window: window, Text: `^.+$`, Priority: 100}, w.handleLook,
-	); err != nil {
+	// Refl's own, like the main window: the rule that opens a row is about
+	// every window it owns, so this one needs nothing installed for it.
+	if err := window.SetOwner(true); err != nil {
 		return false
 	}
 	w.mu.Lock()
@@ -504,11 +643,16 @@ func (w *reflWindow) handleLook(plumb apexapi.Plumb) bool {
 	return err == nil
 }
 
-// forget drops a pane whose window the reader deleted.
+// forget drops a pane whose window the reader deleted, and a draft thrown away
+// before it was ever named.
 func (w *reflWindow) forget(window *apexapi.Window) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	delete(w.panes, window.ID)
+	pending := w.drafts[window.ID]
+	w.mu.Unlock()
+	if pending != nil {
+		w.release(pending)
+	}
 }
 
 // lookPoint is where a Look happened: what B3 took, else the pointer, else the
@@ -607,6 +751,12 @@ func (w *reflWindow) write(showing *pane, next view, asked bool) error {
 	}
 	if from, to, text, changed := minimalEdit(current, next.text); changed {
 		if err := showing.window.Replace(from, to, text); err != nil {
+			return err
+		}
+		// The writing was the point, so the window is not dirty for having
+		// been written — as acme's win says after every write of its own.
+		// What the reader types into it afterwards is theirs, and says so.
+		if err := showing.window.SetClean(); err != nil {
 			return err
 		}
 	}

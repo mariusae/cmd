@@ -124,23 +124,58 @@ command line opens the window already searching.
     Backlinks [NOTE]  Open a window on what links to a note, with the block
                       around each link: the note named, the note the window
                       holds, or the note under the pointer.
-    Note [TITLE]      Create `notes/<slug>.md` for TITLE and open it, the
+    New [TITLE]       Create `notes/<slug>.md` for TITLE and open it, the
                       cursor in the body. With no title, the selection is one;
-                      with neither, the note is begun untitled and the cursor
-                      sits in its empty heading, so what is typed first names
-                      it.
+                      with neither, an empty window opens and `Put` there names
+                      the note after what has been written in it.
     Today             Open today's daily note.
     Sync              Commit, merge and push the graph now.
 
-`Note`, `Backlinks` and `Sync` are offered on the graph's own notes too, so a
+`New`, `Backlinks` and `Sync` are offered on the graph's own notes too, so a
 note open in the session can ask what points at it, beget one, or be sent on.
-Daily notes answer to `Yesterday`, `Today` and `Tomorrow`, which open the
-neighbouring day — dailies are created lazily, so a day that does not exist yet
-opens empty and is written on Put.
+Those verbs are about real files, not about a window some tool made and
+happened to name like a note. Daily notes answer to `Yesterday`, `Today` and
+`Tomorrow`, which open the neighbouring day — dailies are created lazily, so a
+day that does not exist yet opens empty and is written on Put.
 
-The verb is `Note`, not `New`: `New` is one of Apex's own commands, and those
-take every B2 before a tool's verbs are tried, so no tool can answer to that
-word.
+The window and its backlinks windows are refl's own: what is in them is refl's
+doing and not a file's text, so their tags offer nothing to write them with and
+`Del` asks nothing before closing one. Refl says they are clean after each
+refresh, as acme's `win` does, which leaves dirty meaning what it means
+everywhere else — text of yours that has not been acted on.
+
+### A note begun before it is named
+
+`New` with a title writes the file at once, because the title is what names it.
+With nothing to call it there is nothing to name a file after, so nothing is
+written: the note is begun in an empty window called `/path/to/graph+New`,
+whose `Put` refl answers to. A draft thrown away — `Del`, and no `Put` — leaves
+nothing behind.
+
+`Put` reads the note's title the way the graph reads any other: a frontmatter
+`title:`, else the first heading, else the first line written. That names
+`notes/<slug>.md`; the name is taken as it is chosen, so two drafts saved at
+once cannot land on one file, and the note is written there with the ULID `id:`
+a note refl makes carries — unless the writer wrote one already. The window is
+then that note's window: brought to the text as it was written, said to be
+clean, since what it holds is now what is on disk, and renamed to the file,
+which is what puts the path in its tag. The name comes last on purpose; until
+the window has it nothing is watching the file, so what refl wrote there is
+never taken for someone else's change and read back over the writer's hands.
+
+A draft is not one of refl's own windows, and is deliberately not claimed as
+one: it is a note on its way to being a file, so it wants what any file window
+has — `Undo` and `Redo` while it is written, `Put` in the tag as soon as there
+is something to save, and `Del` asking before it throws away what was typed.
+Afterwards it is an ordinary note window, and `Put` there means what it means
+everywhere else.
+
+`New` and `Put` are Apex's own words. A rule may take one so long as it says
+which windows it is about: these say the graph's notes and refl's own windows,
+and a handler that refuses — `Put` with a filename after it, say — hands the
+word back, so Apex does with it what it always does. Refl's `Put` is unlisted,
+which keeps it out of the tools menu: Apex already offers `Put` in the tag of a
+window with a file behind it, and two of them would say there were two.
 
 ### The window's state is its own text
 

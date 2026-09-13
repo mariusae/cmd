@@ -20,6 +20,7 @@ package main
 // truncated.
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -578,6 +579,7 @@ func splitFrontmatter(source string) frontmatterSplit {
 // frontmatterFields are the frontmatter keys this tool acts on.
 type frontmatterFields struct {
 	title   string
+	id      string
 	aliases []string
 	private bool
 }
@@ -595,6 +597,15 @@ func parseFrontmatter(raw string) frontmatterFields {
 	}
 	if value, ok := parsed["title"].(string); ok {
 		fields.title = strings.TrimSpace(value)
+	}
+	// An id of digits alone is a number to YAML, not a string, so whatever
+	// scalar is there is read: a note that has an id must not be given another.
+	switch value := parsed["id"].(type) {
+	case string:
+		fields.id = strings.TrimSpace(value)
+	case nil:
+	default:
+		fields.id = strings.TrimSpace(fmt.Sprint(value))
 	}
 	if values, ok := parsed["aliases"].([]any); ok {
 		for _, value := range values {

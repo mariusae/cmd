@@ -65,10 +65,10 @@ Apex:
                       graph.
     Backlinks [NOTE]  Open a window on what links to a note: the one named, the
                       one the window holds, or the one under the pointer.
-    Note [TITLE]      Create notes/<slug>.md for TITLE and open it, the cursor
+    New [TITLE]       Create notes/<slug>.md for TITLE and open it, the cursor
                       in the body. With no title, the selection is one; with
-                      neither, the note is begun untitled and the cursor sits
-                      in its empty heading, so what is typed first names it.
+                      neither, an empty window opens and Put there names the
+                      note after what has been written in it.
     Today             Open today's daily note.
     Sync              Commit, merge and push the graph now.
 
@@ -78,7 +78,7 @@ Apex:
   over. Every view ends on a "more" row while there is more to show.
 
   A backlinks window is a throwaway, named for the note it is about; Del is how
-  it goes. Note, Backlinks and Sync are offered on the graph's own notes too,
+  it goes. New, Backlinks and Sync are offered on the graph's own notes too,
   and daily notes answer to Yesterday, Today and Tomorrow, which open the
   neighbouring day.
 
@@ -86,8 +86,10 @@ Apex:
   that moves something says so in +Errors. A merge that conflicts is undone
   rather than left behind, and reported.
 
-  The verb is Note, not New: New is one of Apex's own commands, and those take
-  every B2 before a tool's verbs are tried.
+  New with nothing to call the note opens a window named for the graph, with
+  Put in its tag. Nothing is written until then; Put names the file after the
+  note's own title, writes it, and leaves an ordinary window behind. New and
+  Put are Apex's own words, taken here for the windows refl is about.
 
 Options:
   -c        Print the block around each match.
