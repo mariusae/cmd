@@ -16,6 +16,30 @@ self-contained `mc` columnator, the column-oriented `lc`, and the
 path-preserving `lf` file lister. See [`9misc/README.md`](9misc/README.md) for
 behavior, dependencies, and installation.
 
+## `p`
+
+`p` prints files a page at a time, after the Plan 9 command of the same name:
+22 lines — a third of an nroff page — then a wait for a command. There is no
+screen addressing, no status line, and no way to go backwards, so the text
+stays in the scrollback where it can be searched and copied.
+
+Commands are read from `/dev/tty`, which leaves standard input free for the
+text being printed. A newline prints the next page, `q` quits, and `!COMMAND`
+runs a command with `$SHELL` before asking again. The last line of a page is
+printed without its newline, so the newline that ends a command completes the
+page instead of scrolling it away.
+
+```sh
+cd p
+go build
+
+./p main.go
+./p -40 main.go
+git log | ./p
+```
+
+Run `p -help` for complete usage.
+
 ## `refl`
 
 `refl` searches and follows a Reflect notes graph: a directory of Markdown
