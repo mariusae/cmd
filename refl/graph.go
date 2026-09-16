@@ -27,8 +27,10 @@ const (
 // them is content or scaffolding, never a note.
 var reservedTrees = map[string]bool{"assets": true, "audio-memos": true, "templates": true}
 
-// graphMarkers are the directories that identify a graph root.
-var graphMarkers = []string{".reflect", dailyDir, notesDir}
+// graphMarkers are the directories that identify a graph root. A .reflect
+// directory is decisive; without it, both note trees must be present. A lone
+// notes/ ancestor is too common to safely mean "the graph starts here".
+var graphMarkers = []string{".reflect", dailyDir + " and " + notesDir}
 
 var dailyNameRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}\.md$`)
 
@@ -81,12 +83,15 @@ func checkGraph(dir string) (string, error) {
 }
 
 func isGraph(dir string) bool {
-	for _, marker := range graphMarkers {
-		if info, err := os.Stat(filepath.Join(dir, marker)); err == nil && info.IsDir() {
-			return true
-		}
+	if isDir(filepath.Join(dir, ".reflect")) {
+		return true
 	}
-	return false
+	return isDir(filepath.Join(dir, dailyDir)) && isDir(filepath.Join(dir, notesDir))
+}
+
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // A graph reads notes out of a root directory, remembering what it has already

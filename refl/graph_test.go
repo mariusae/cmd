@@ -86,6 +86,32 @@ func TestFindGraphFallsBackThroughEnvironmentThenWorkingDirectory(t *testing.T) 
 	}
 }
 
+func TestFindGraphDoesNotMistakeAHomeNotesDirectoryForTheGraph(t *testing.T) {
+	home := t.TempDir()
+	for _, dir := range []string{
+		filepath.Join(home, notesDir),
+		filepath.Join(home, defaultGraph, dailyDir),
+		filepath.Join(home, defaultGraph, notesDir),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inside := filepath.Join(home, "src", "cmd", "refl")
+	if err := os.MkdirAll(inside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	want := filepath.Join(home, defaultGraph)
+	got, err := findGraph("",
+		func(string) string { return "" },
+		func() (string, error) { return inside, nil },
+		func() (string, error) { return home, nil })
+	if err != nil || got != want {
+		t.Fatalf("got (%q, %v), want %q", got, err, want)
+	}
+}
+
 func TestFindGraphRefusesADirectoryThatIsNotOne(t *testing.T) {
 	plain := t.TempDir()
 	if _, err := findGraph(plain, os.Getenv, os.Getwd, os.UserHomeDir); err == nil {

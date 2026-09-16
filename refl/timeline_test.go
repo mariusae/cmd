@@ -65,8 +65,10 @@ func gitGraph(t *testing.T, revisions ...map[string]string) string {
 		t.Skip("git is not installed")
 	}
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, notesDir), 0o755); err != nil {
-		t.Fatal(err)
+	for _, dir := range []string{dailyDir, notesDir} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	git(t, root, 0, "init", "-q")
 	for sequence, revision := range revisions {

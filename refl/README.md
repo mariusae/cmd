@@ -24,8 +24,8 @@ First match wins:
 
 1. `-g DIR`
 2. `$REFLECT_GRAPH`
-3. The nearest ancestor of the working directory holding `.reflect/`,
-   `daily/`, or `notes/`
+3. The nearest ancestor of the working directory holding `.reflect/`, or both
+   `daily/` and `notes/`
 4. `~/reflect`
 
 Notes marked `private: true` in their frontmatter are never listed, matched, or
