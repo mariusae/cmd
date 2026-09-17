@@ -95,7 +95,7 @@ func TestRenderDashboardShowsPlainWorktreeRows(t *testing.T) {
 	}
 }
 
-func TestRenderDashboardExpansionShowsTransitionHistory(t *testing.T) {
+func TestRenderDashboardExpansionShowsAgentSummaries(t *testing.T) {
 	home := t.TempDir()
 	store, err := newStateStore(home, func(string) string { return "" })
 	if err != nil {
@@ -138,8 +138,8 @@ func TestRenderDashboardExpansionShowsTransitionHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Count(text, " working\n"); got != 1 {
-		t.Fatalf("working event count = %d, want 1:\n%s", got, text)
+	if strings.Contains(text, "\t12:01AM working\n") {
+		t.Fatalf("dashboard includes a working transition:\n%s", text)
 	}
 	if !strings.Contains(text, "\t12:01AM complete (10s)\n\t\tAll done.\n\t\t\n\t\t- Tests pass.\n") {
 		t.Fatalf("dashboard has no done history event:\n%s", text)
@@ -206,18 +206,13 @@ func TestRenderDashboardSeparatesSessionHistoryFromRecentGlobalEvents(t *testing
 		t.Fatalf("could not isolate expanded session:\n%s", text)
 	}
 	expanded := text[firstStart:secondStart]
-	wantSession := []string{
-		"\t2:26AM working\n",
-		"\t2:31AM waiting\n",
-		"\t2:41AM complete (15m)\n",
+	if !strings.Contains(expanded, "\t2:41AM complete (15m)\n") {
+		t.Fatalf("expanded session has no completed summary:\n%s", expanded)
 	}
-	last := -1
-	for _, want := range wantSession {
-		position := strings.Index(expanded, want)
-		if position <= last {
-			t.Fatalf("expanded session is missing or unordered at %q:\n%s", want, expanded)
+	for _, unwanted := range []string{"\t2:26AM working\n", "\t2:31AM waiting\n"} {
+		if strings.Contains(expanded, unwanted) {
+			t.Fatalf("expanded session includes transition %q:\n%s", unwanted, expanded)
 		}
-		last = position
 	}
 	if strings.Contains(expanded, "11:46PM") || strings.Contains(expanded, "12:16AM") {
 		t.Fatalf("expanded session includes the previous session:\n%s", expanded)
@@ -228,10 +223,7 @@ func TestRenderDashboardSeparatesSessionHistoryFromRecentGlobalEvents(t *testing
 
 	wantGlobal := "\n" +
 		directoryPath(firstPath) + "\tcomplete (15m)\t2:41AM\tcodex\n" +
-		"\tFinished current work.\n" +
-		directoryPath(secondPath) + "\tworking\t2:36AM\tclaude\n" +
-		directoryPath(firstPath) + "\twaiting\t2:31AM\tcodex\n" +
-		directoryPath(firstPath) + "\tworking\t2:26AM\tcodex\n"
+		"\tFinished current work.\n"
 	if !strings.HasSuffix(text, wantGlobal) {
 		t.Fatalf("dashboard has no reverse-chronological global events:\n%s", text)
 	}
@@ -248,7 +240,7 @@ func TestRenderDashboardCapsRecentEventsAtTwenty(t *testing.T) {
 		state := agentState{
 			WorktreePath:   fmt.Sprintf("/repo-task-%02d", index),
 			RepositoryRoot: root,
-			Status:         "working",
+			Status:         "done",
 			Agent:          "codex",
 			SessionID:      fmt.Sprintf("session-%02d", index),
 			UpdatedAt:      now.Add(-time.Duration(index) * time.Minute).Unix(),

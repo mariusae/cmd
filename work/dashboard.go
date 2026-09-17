@@ -476,7 +476,7 @@ func renderDashboardView(repo repository, store *stateStore, now time.Time, live
 			return dashboardRender{}, err
 		}
 	}
-	recentEvents, newestEventLength, err := renderRecentEvents(repo.MainRoot, store, now)
+	recentEvents, newestEventLength, err := renderRecentSummaries(repo.MainRoot, store, now)
 	if err != nil {
 		return dashboardRender{}, err
 	}
@@ -509,7 +509,7 @@ func renderWorktreeSummary(worktree worktree, state agentState, exists bool, tit
 	fmt.Fprintf(&output, "note: %s\n", note)
 	fmt.Fprintf(&output, "last change: %s\n", dashboardField(changeTitle))
 	output.WriteString("agent:\n")
-	if err := writeAgentEvents(&output, worktree.Path, state, store, now); err != nil {
+	if err := writeAgentSummaries(&output, worktree.Path, state, store, now); err != nil {
 		return "", err
 	}
 	return output.String(), nil
@@ -521,11 +521,11 @@ func writeWorktreeDetails(output *strings.Builder, worktree worktree, state agen
 		return err
 	}
 	fmt.Fprintf(output, "\t%s\n", note)
-	return writeAgentEvents(output, worktree.Path, state, store, now)
+	return writeAgentSummaries(output, worktree.Path, state, store, now)
 }
 
-func writeAgentEvents(output *strings.Builder, worktreePath string, state agentState, store *stateStore, now time.Time) error {
-	events, err := store.listSessionEvents(worktreePath, state.Agent, state.SessionID)
+func writeAgentSummaries(output *strings.Builder, worktreePath string, state agentState, store *stateStore, now time.Time) error {
+	events, err := store.listSessionSummaries(worktreePath, state.Agent, state.SessionID)
 	if err != nil {
 		return err
 	}
@@ -536,8 +536,8 @@ func writeAgentEvents(output *strings.Builder, worktreePath string, state agentS
 	return nil
 }
 
-func renderRecentEvents(repositoryRoot string, store *stateStore, now time.Time) (string, int, error) {
-	events, err := store.listRecentEvents(
+func renderRecentSummaries(repositoryRoot string, store *stateStore, now time.Time) (string, int, error) {
+	events, err := store.listRecentSummaries(
 		repositoryRoot,
 		now.Add(-dashboardRecentEventAge).Unix(),
 		dashboardRecentEventLimit,

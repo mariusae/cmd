@@ -364,7 +364,7 @@ LIMIT %d;
 	return events, nil
 }
 
-func (s *stateStore) listSessionEvents(worktreePath, agent, sessionID string) ([]agentEvent, error) {
+func (s *stateStore) listSessionSummaries(worktreePath, agent, sessionID string) ([]agentEvent, error) {
 	if err := s.initialize(); err != nil {
 		return nil, err
 	}
@@ -394,12 +394,13 @@ FROM agent_events AS e
 WHERE e.worktree_path = %s
   AND e.agent = %s
   AND e.session_id = %s
+  AND e.status = 'done'
 ORDER BY created_at ASC, id ASC;
 `, sqlString(filepath.Clean(worktreePath)), sqlString(agent), sqlString(sessionID))
-	return s.readEvents(query, "reading agent session history")
+	return s.readEvents(query, "reading agent session summaries")
 }
 
-func (s *stateStore) listRecentEvents(repositoryRoot string, since int64, limit int) ([]agentEvent, error) {
+func (s *stateStore) listRecentSummaries(repositoryRoot string, since int64, limit int) ([]agentEvent, error) {
 	if err := s.initialize(); err != nil {
 		return nil, err
 	}
@@ -434,10 +435,11 @@ SELECT e.id, e.worktree_path, e.repository_root, e.status, e.agent, e.session_id
 FROM agent_events AS e
 WHERE e.repository_root = %s
   AND e.created_at >= %d
+  AND e.status = 'done'
 ORDER BY created_at DESC, id DESC
 LIMIT %d;
 `, sqlString(filepath.Clean(repositoryRoot)), since, limit)
-	return s.readEvents(query, "reading recent agent events")
+	return s.readEvents(query, "reading recent agent summaries")
 }
 
 func (s *stateStore) readEvents(query, action string) ([]agentEvent, error) {

@@ -164,7 +164,6 @@ func TestDefaultInWorktreeShowsCurrentSummary(t *testing.T) {
 		"note: " + note + "\n" +
 		"last change: Implement bare work summary\n" +
 		"agent:\n" +
-		"\t11:59AM working\n" +
 		"\t12:00PM complete (2s)\n"
 	if stdout.String() != want {
 		t.Fatalf("stdout = %q, want %q", stdout.String(), want)

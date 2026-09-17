@@ -250,7 +250,7 @@ func TestStateStoreBackfillsTranscriptPointerOnExistingEvent(t *testing.T) {
 	}
 }
 
-func TestStateStoreListsOneSessionChronologicallyAndRecentAgentsInReverse(t *testing.T) {
+func TestStateStoreListsCompletedSessionAndRecentSummaries(t *testing.T) {
 	store, err := newStateStore(t.TempDir(), func(string) string { return "" })
 	if err != nil {
 		t.Fatal(err)
@@ -272,6 +272,7 @@ func TestStateStoreListsOneSessionChronologicallyAndRecentAgentsInReverse(t *tes
 		withEvent(first, "working", "current", now.Add(-20*time.Minute)),
 		withEvent(first, "waiting", "current", now.Add(-15*time.Minute)),
 		withEvent(second, "working", "other", now.Add(-10*time.Minute)),
+		withEvent(second, "done", "other", now.Add(-9*time.Minute)),
 		withEvent(first, "done", "current", now.Add(-5*time.Minute)),
 		withEvent(other, "working", "elsewhere", now.Add(-time.Minute)),
 	}
@@ -281,41 +282,39 @@ func TestStateStoreListsOneSessionChronologicallyAndRecentAgentsInReverse(t *tes
 		}
 	}
 
-	session, err := store.listSessionEvents(first.WorktreePath, first.Agent, "current")
+	session, err := store.listSessionSummaries(first.WorktreePath, first.Agent, "current")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(session) != 3 || session[0].Status != "working" ||
-		session[1].Status != "waiting" || session[2].Status != "done" {
+	if len(session) != 1 || session[0].Status != "done" {
 		t.Fatalf("session events = %#v", session)
 	}
-	if session[2].StartedAt != now.Add(-20*time.Minute).Unix() {
-		t.Fatalf("completed event started_at = %d", session[2].StartedAt)
+	if session[0].StartedAt != now.Add(-20*time.Minute).Unix() {
+		t.Fatalf("completed event started_at = %d", session[0].StartedAt)
 	}
 
-	recent, err := store.listRecentEvents(root, now.Add(-2*time.Hour).Unix(), 20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(recent) != 4 {
-		t.Fatalf("recent events = %#v, want four", recent)
-	}
-	wantStatuses := []string{"done", "working", "waiting", "working"}
-	for index, want := range wantStatuses {
-		if recent[index].Status != want {
-			t.Fatalf("recent event %d = %#v, want status %q", index, recent[index], want)
-		}
-		if index > 0 && recent[index-1].CreatedAt < recent[index].CreatedAt {
-			t.Fatalf("recent events are not reverse chronological: %#v", recent)
-		}
-	}
-
-	recent, err = store.listRecentEvents(root, now.Add(-2*time.Hour).Unix(), 2)
+	recent, err := store.listRecentSummaries(root, now.Add(-2*time.Hour).Unix(), 20)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(recent) != 2 {
-		t.Fatalf("limited recent events = %#v", recent)
+		t.Fatalf("recent summaries = %#v, want two", recent)
+	}
+	for index, event := range recent {
+		if event.Status != "done" {
+			t.Fatalf("recent summary %d = %#v, want done", index, event)
+		}
+		if index > 0 && recent[index-1].CreatedAt < recent[index].CreatedAt {
+			t.Fatalf("recent summaries are not reverse chronological: %#v", recent)
+		}
+	}
+
+	recent, err = store.listRecentSummaries(root, now.Add(-2*time.Hour).Unix(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recent) != 1 {
+		t.Fatalf("limited recent summaries = %#v", recent)
 	}
 }
 

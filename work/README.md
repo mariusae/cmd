@@ -14,7 +14,7 @@ work -a
 ```
 
 Inside a worktree, running `work` without arguments shows its status, notes
-path, recent agent events, and current Sapling change title. The notes file is
+path, recent agent summaries, and current Sapling change title. The notes file is
 created if necessary. Outside a repository, bare `work` lists the configured
 default repository's linked worktrees. Explicit `work ls` always lists linked
 worktrees and omits the main worktree. `new` creates a dated sibling of the main
@@ -71,19 +71,19 @@ agent activity, and refreshes automatically as worktrees, agent states, and
 titles change without disturbing the viewport for unrelated updates.
 
 Choose `Expand` from Apex's tools menu with the point on a worktree row (or one
-of its detail rows) to toggle that agent session's status events in
-chronological order. The expanded section starts with the worktree's notes
-path, which can be opened with B3. Completed events include the corresponding
+of its detail rows) to toggle that agent session's completed prompt summaries
+in chronological order. The expanded section starts with the worktree's notes
+path, which can be opened with B3. Each summary includes the corresponding
 assistant response read from the recorded Claude, Codex, Gemini, or OpenCode
-session transcript when it is available, plus the elapsed time from that
-operation's first `working` event. The history continues to update while the
-dashboard is open.
+session transcript when it is available, plus the operation's elapsed time.
+The history continues to update while the dashboard is open.
 
-Below the worktree rows, recent activity across all agents appears in reverse
-chronological order without a section header. It includes at most 20 events
-recorded in the last two hours, with the corresponding assistant response under
-each completed event when available. The dashboard scrolls to the newest event
-when this activity changes and selects its status line and complete response.
+Below the worktree rows, recent completed prompt summaries across all agents
+appear in reverse chronological order without a section header. It includes at
+most 20 summaries recorded in the last two hours, with the corresponding
+assistant response under each one when available. The dashboard scrolls to the
+newest summary when this activity changes and selects its status line and
+complete response.
 When an agent was started from Apex, B3 on its agent name (such as `codex`)
 switches to its originating Apex session and live window. `Agent` in the tools
 menu does the same for the agent name at the current point. The status hook
