@@ -16,6 +16,40 @@ self-contained `mc` columnator, the column-oriented `lc`, and the
 path-preserving `lf` file lister. See [`9misc/README.md`](9misc/README.md) for
 behavior, dependencies, and installation.
 
+## `drafts`
+
+`drafts` keeps a directory of documents being written: a flat directory of
+Markdown files, one per draft, with no index and nothing running. A draft is a
+file, its title is the first thing in it that reads like one — a frontmatter
+`title:`, else the first H1, else the first line with anything on it — and its
+age is the file's own.
+
+A query prints the Markdown block each match was made in, by the same block
+rules `refl` uses, because a line of prose is a wrap and the sentence it
+belongs to is the smallest piece that still says something. `-t` prints recent
+modifications, and `-a` opens an Apex window on the directory: the drafts, most
+recently modified first, a page at a time, with `Search`, `Timeline`, `Get`,
+`New`, `Preview` and `Notes`. Beside a draft may lie its notes,
+`<name>-notes.md`, which `Notes` opens and makes.
+
+A drafts directory under git or Sapling is committed on every `Put`, and the
+commit is pushed in the background: writing is the only thing asked of the
+writer, and a draft kept nowhere but one disk is not kept. The push is its own
+thread of work, so a remote having a bad day costs nothing at the keyboard.
+
+```sh
+cd drafts
+go build
+
+./drafts foobar
+./drafts -t
+./drafts -a
+```
+
+`drafts` uses `-d`, else `$DRAFTS_DIR`, else `~/drafts`. See
+[`drafts/README.md`](drafts/README.md) or run `drafts -help` for the block
+rules, the timeline, and the Apex window.
+
 ## `p`
 
 `p` prints files a page at a time, after the Plan 9 command of the same name:
