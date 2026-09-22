@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -288,5 +290,160 @@ func TestRelPath(t *testing.T) {
 		if got != test.want || ok != test.ok {
 			t.Errorf("relPath(%q, %q): got %q, %v", test.prefix, test.file, got, ok)
 		}
+	}
+}
+
+func TestSyncReport(t *testing.T) {
+	var report syncReport
+	if !report.quiet() || report.String() != "" {
+		t.Errorf("an empty report: quiet=%v, %q", report.quiet(), report)
+	}
+	report.add(count(1, "draft") + " committed")
+	report.add(count(3, "commit") + " pulled")
+	if report.quiet() {
+		t.Error("a report with something in it says it is quiet")
+	}
+	if got := report.String(); got != "1 draft committed, 3 commits pulled" {
+		t.Errorf("got %q", got)
+	}
+}
+
+// A sync with no remote is the commit and nothing else, and is not a failure.
+func TestSyncWithNoRemote(t *testing.T) {
+	root := t.TempDir()
+	gitRepo(t, root)
+	repo := openVCS(root)
+	write(t, root, "one.md", "# One\n")
+
+	report, err := repo.sync()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := report.String(); got != "1 draft committed" {
+		t.Errorf("got %q", got)
+	}
+	// And again, with nothing written since.
+	if report, err = repo.sync(); err != nil || !report.quiet() {
+		t.Errorf("got %q, %v; want a quiet report", report, err)
+	}
+}
+
+// Sync is two-way: what was written here goes up, what was written elsewhere
+// comes down.
+func TestSyncBothWays(t *testing.T) {
+	remote := t.TempDir()
+	if _, err := run(remote, "git", "init", "--quiet", "--bare", "-b", "main"); err != nil {
+		t.Skipf("git is not usable here: %v", err)
+	}
+	here, elsewhere := t.TempDir(), t.TempDir()
+	gitRepo(t, here)
+	write(t, here, "one.md", "# One\n")
+	if _, err := openVCS(here).commit(); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"remote", "add", "origin", remote},
+		{"push", "--quiet", "--set-upstream", "origin", "main"},
+	} {
+		if _, err := run(here, "git", args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Another machine, writing its own draft.
+	if _, err := run(elsewhere, "git", "clone", "--quiet", remote, "."); err != nil {
+		t.Fatal(err)
+	}
+	gitRepo(t, elsewhere)
+	write(t, elsewhere, "two.md", "# Two\n")
+	if _, err := openVCS(elsewhere).commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(elsewhere, "git", "push", "--quiet"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Here, meanwhile, a third draft that has not gone anywhere yet.
+	write(t, here, "three.md", "# Three\n")
+	report, err := openVCS(here).sync()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := report.String(); got != "1 draft committed, 1 commit pulled, 2 commits pushed" {
+		t.Errorf("got %q", got)
+	}
+	// What was written elsewhere is here now, and what was written here is there.
+	if _, err := os.Stat(filepath.Join(here, "two.md")); err != nil {
+		t.Errorf("the other machine's draft did not arrive: %v", err)
+	}
+	out, err := run(remote, "git", "ls-tree", "--name-only", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"one.md", "two.md", "three.md"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the remote is missing %s: %q", want, out)
+		}
+	}
+}
+
+// A directory half in conflict renders as drafts full of markers, and a sync
+// running behind the writer's back has no business leaving one there.
+func TestSyncUndoesAConflictedMerge(t *testing.T) {
+	remote := t.TempDir()
+	if _, err := run(remote, "git", "init", "--quiet", "--bare", "-b", "main"); err != nil {
+		t.Skipf("git is not usable here: %v", err)
+	}
+	here, elsewhere := t.TempDir(), t.TempDir()
+	gitRepo(t, here)
+	write(t, here, "one.md", "# One\n\noriginal\n")
+	if _, err := openVCS(here).commit(); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"remote", "add", "origin", remote},
+		{"push", "--quiet", "--set-upstream", "origin", "main"},
+	} {
+		if _, err := run(here, "git", args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := run(elsewhere, "git", "clone", "--quiet", remote, "."); err != nil {
+		t.Fatal(err)
+	}
+	gitRepo(t, elsewhere)
+	write(t, elsewhere, "one.md", "# One\n\nwritten there\n")
+	if _, err := openVCS(elsewhere).commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(elsewhere, "git", "push", "--quiet"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The same line, written differently here.
+	write(t, here, "one.md", "# One\n\nwritten here\n")
+	if _, err := openVCS(here).sync(); err == nil {
+		t.Fatal("a conflicting merge was reported as a success")
+	}
+	content, err := os.ReadFile(filepath.Join(here, "one.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(content), "<<<<<<<") {
+		t.Errorf("the conflict was left behind:\n%s", content)
+	}
+	if string(content) != "# One\n\nwritten here\n" {
+		t.Errorf("the draft was not left where it was:\n%s", content)
+	}
+}
+
+func TestQuietSwallowsOnlyNothingToPush(t *testing.T) {
+	if quiet(errors.New("abort: no changes found")) != nil {
+		t.Error("a push with nothing to push should not be an error")
+	}
+	if quiet(errors.New("abort: could not reach the remote")) == nil {
+		t.Error("a real failure was swallowed")
+	}
+	if quiet(nil) != nil {
+		t.Error("nil is not an error")
 	}
 }

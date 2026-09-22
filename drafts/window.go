@@ -33,6 +33,9 @@ const (
 	// pageSize is how many drafts a window shows at a time. The rest are a
 	// Look away, on the `more` row the window ends with.
 	pageSize = 10
+	// syncEvery is how often the directory is synced while the window is open.
+	// Drafts are written by hand, so the remote is never far behind.
+	syncEvery = 5 * time.Minute
 )
 
 // The views the main window answers to. Its first line names the one it is
@@ -51,6 +54,9 @@ const (
 	newVerb = "New"
 	putVerb = "Put"
 )
+
+// syncVerb brings the directory and its remote into step now.
+const syncVerb = "Sync"
 
 // A row is what one line of a window's body stands for: a draft and the line
 // of it the row came from, or the `more` row that shows the next page.
@@ -77,6 +83,18 @@ type pane struct {
 	written string
 }
 
+// An unnamed is a draft begun before it was named: the window it is being
+// written in, and the rule by which that window's Put settles where it belongs.
+//
+// It is deliberately not claimed as one of drafts' own windows, though drafts
+// made it. A draft on its way to being a file wants what any file window has —
+// Undo and Redo while it is written, Put in the tag as soon as there is
+// something to save, and Del asking before it throws away what was typed.
+type unnamed struct {
+	window *apexapi.Window
+	rule   apexapi.RuleID
+}
+
 type draftsWindow struct {
 	dir  *dir
 	tool *apexapi.Tool
@@ -89,13 +107,23 @@ type draftsWindow struct {
 	main *pane
 	// command is the main window's first line: the view it is showing.
 	command string
+	// begun are the drafts opened but not yet named, by window.
+	begun map[int]*unnamed
 
 	refresh chan struct{}
-	// keeping asks for a commit, pushing for a push. Both are coalesced: what
-	// is wanted is that the writing ends up recorded and sent, not that each
-	// Put has a commit and a push of its own waiting on it.
+	// keeping asks for a commit, pushing for a push, syncing for a sync now.
+	// All three are coalesced: what is wanted is that the writing ends up
+	// recorded and sent, not that each Put has a commit and a push of its own
+	// waiting on it.
 	keeping chan struct{}
 	pushing chan struct{}
+	syncing chan struct{}
+
+	// vcsMu is held by anything that writes to the repository, so a commit
+	// never runs into a merge. It is not held over the refresh, which only
+	// reads: a writer waiting on a sync waits in the background, never at the
+	// keyboard.
+	vcsMu sync.Mutex
 }
 
 // openWindow shows the drafts in the session until the window is deleted.
@@ -117,9 +145,11 @@ func openWindow(d *dir, query string, getenv func(string) string, now func() tim
 		now:     now,
 		owner:   owner,
 		command: openingCommand(query),
+		begun:   map[int]*unnamed{},
 		refresh: make(chan struct{}, 1),
 		keeping: make(chan struct{}, 1),
 		pushing: make(chan struct{}, 1),
+		syncing: make(chan struct{}, 1),
 	}
 
 	// Render while the UI creates the window and marks it live: the render is
@@ -139,6 +169,8 @@ func openWindow(d *dir, query string, getenv func(string) string, now func() tim
 		return err
 	}
 
+	tool.OnDelete(w.forget)
+
 	serving := make(chan error, 1)
 	go func() { serving <- tool.Serve(ctx) }()
 	// Keeping and sending are each their own thread of work: a commit must not
@@ -146,6 +178,7 @@ func openWindow(d *dir, query string, getenv func(string) string, now func() tim
 	// may take as long as that machine likes — must not wait on the commit.
 	go w.keeper(ctx)
 	go w.pusher(ctx)
+	go w.syncer(ctx)
 
 	if err := w.write(w.main, <-rendered, true); err != nil {
 		return err
@@ -207,6 +240,7 @@ func (w *draftsWindow) offer(window *apexapi.Window) error {
 		{apexapi.Rule{Verb: timelineVerb, Window: window, Priority: 100}, w.handleTimeline},
 		{apexapi.Rule{Verb: "Get", Window: window, Priority: 100}, w.handleGet},
 		{apexapi.Rule{Verb: newVerb, Window: window, Priority: 100}, w.handleNew},
+		{apexapi.Rule{Verb: syncVerb, Window: window, Priority: 100}, w.handleSync},
 		// A row is a draft wherever drafts wrote one: the rule is about the
 		// windows this drafts owns, so nothing has to guess at their names.
 		{apexapi.Rule{Owner: w.ownPattern(), Text: `^.+$`, Priority: 100}, w.handleLook},
@@ -219,6 +253,7 @@ func (w *draftsWindow) offer(window *apexapi.Window) error {
 		{apexapi.Rule{Verb: "Notes", File: w.filePattern(), Owner: apexapi.NoOwner, Priority: 100}, w.handleNotes},
 		{apexapi.Rule{Verb: searchVerb, File: w.filePattern(), Owner: apexapi.NoOwner, Priority: 100}, w.handleSearch},
 		{apexapi.Rule{Verb: newVerb, File: w.filePattern(), Owner: apexapi.NoOwner, Priority: 100}, w.handleNew},
+		{apexapi.Rule{Verb: syncVerb, File: w.filePattern(), Owner: apexapi.NoOwner, Priority: 100}, w.handleSync},
 		// Put is Apex's own word, taken here for the directory's files so that
 		// writing and keeping are the one act. Unlisted: apex puts Put in the
 		// tag itself, and a second one in the tools menu would say there were
@@ -323,29 +358,129 @@ func (w *draftsWindow) show(command string) {
 
 // ---- the drafts ----------------------------------------------------------
 
-// handleNew writes a draft and opens it where writing begins. The title may
-// follow the verb or be swept in a window, so a phrase already written can
-// become the draft it names; with neither, the draft is opened with its
-// heading empty and the cursor in it, since the first thing wanted is what
-// this is about.
+// handleNew begins a draft. Nothing is written yet: a draft's filename comes
+// from its title, and the title is not known until something has been written.
+// So the draft is begun in a window of its own, and Put there is what names it.
+//
+// A title may follow the verb or be swept in a window, so a phrase already
+// written can become the draft it names; it opens the window as the heading,
+// where it is ordinary text that can be rewritten before it is ever a filename.
+// With neither, the window opens empty and the first thing typed is the title.
+//
+// A draft thrown away — Del, and no Put — leaves nothing behind.
 func (w *draftsWindow) handleNew(plumb apexapi.Plumb) bool {
 	title := strings.TrimSpace(plumb.Text)
 	if title == "" {
 		title = w.selectedText(plumb)
 	}
-	path, at, err := w.dir.createDraft(title)
-	if err != nil {
-		return w.complain(newVerb, err)
-	}
-	window, err := w.tool.Open(path, 0)
+	window, err := w.tool.New(draftName(w.dir.root))
 	if err != nil {
 		return false
 	}
-	// A cursor the draft is not yet ready for is no loss: the draft is written
-	// and open either way, so a session that will not move it is not a failure.
-	_ = window.Select(at, at)
-	w.show("")
+	// Put is Apex's, and is taken for this one window: the tag offers it as
+	// soon as anything is typed, and it means what putDraft says it means.
+	pending := &unnamed{window: window}
+	rule, err := w.tool.Offer(
+		// Unlisted: apex puts Put in the tag itself, as it does for any window
+		// with a file behind it, and a second one in the tools menu would say
+		// there were two.
+		apexapi.Rule{Verb: putVerb, Window: window, Unlisted: true, Priority: 100},
+		func(plumb apexapi.Plumb) bool { return w.putDraft(pending, plumb) },
+	)
+	if err != nil {
+		_ = window.Delete()
+		return false
+	}
+	w.mu.Lock()
+	pending.rule = rule
+	w.begun[window.ID] = pending
+	w.mu.Unlock()
+
+	if text, at := opening(title); text != "" {
+		// A heading the window will not take is no loss: the draft is open
+		// either way, and what is typed in it still names it.
+		if err := window.Replace(0, 0, text); err == nil {
+			_ = window.Select(at, at)
+		}
+	}
 	return true
+}
+
+// draftName is what a draft's window is called until it has a name of its own:
+// the directory it will join, and the word that began it.
+func draftName(root string) string { return root + "+" + newVerb }
+
+// putDraft is a begun draft's own Put: what has been written names the draft,
+// and the draft is written there. The window is then that file's window —
+// said to be clean, since what it holds is now what is on disk, and called by
+// the file's name, which is what puts the path in its tag. Drafts lets go of it
+// at the same time: an ordinary draft window from then on, whose Put is the one
+// every draft has, and is committed like any other.
+//
+// A Put that names a file is the writer saying where this goes, and is Apex's
+// alone from the start.
+func (w *draftsWindow) putDraft(pending *unnamed, plumb apexapi.Plumb) bool {
+	if strings.TrimSpace(plumb.Text) != "" {
+		w.release(pending)
+		return false
+	}
+	if err := w.settle(pending); err != nil {
+		// Taken and failed: nothing is written under the draft's own name, and
+		// the draft is still a draft, to be Put again once the trouble is past.
+		return w.complain(putVerb, err)
+	}
+	w.release(pending)
+	// It is a file in the directory now, so it is recorded like one, and the
+	// listing should say it is there.
+	w.keep()
+	w.wake()
+	return true
+}
+
+// settle makes a begun draft's window the window of the file it holds. The
+// name comes last on purpose: until the window has it nothing is watching the
+// file, so what drafts wrote there is never taken for someone else's change
+// and read back over the writer's hands. A name taken for a draft that then
+// could not be settled is given back.
+func (w *draftsWindow) settle(pending *unnamed) error {
+	text, err := pending.window.Read()
+	if err != nil {
+		return err
+	}
+	path, err := w.dir.saveDraft(text)
+	if err != nil {
+		return err
+	}
+	if err = pending.window.SetClean(); err == nil {
+		err = pending.window.Rename(path)
+	}
+	if err != nil {
+		_ = os.Remove(path)
+		return err
+	}
+	return nil
+}
+
+// release lets go of a begun draft: its rule is withdrawn, so Put in that
+// window means what it means everywhere else.
+func (w *draftsWindow) release(pending *unnamed) {
+	w.mu.Lock()
+	rule := pending.rule
+	delete(w.begun, pending.window.ID)
+	w.mu.Unlock()
+	if rule != 0 {
+		_ = w.tool.Withdraw(rule)
+	}
+}
+
+// forget drops a draft thrown away before it was ever named.
+func (w *draftsWindow) forget(window *apexapi.Window) {
+	w.mu.Lock()
+	pending := w.begun[window.ID]
+	w.mu.Unlock()
+	if pending != nil {
+		w.release(pending)
+	}
 }
 
 // handleNotes opens the notes beside a draft, making the file if it is not
@@ -415,6 +550,13 @@ func (w *draftsWindow) handlePut(plumb apexapi.Plumb) bool {
 	_ = plumb.Window.SetClean()
 	w.keep()
 	w.wake()
+	return true
+}
+
+// handleSync asks for a sync now. The answer lands in +Errors, since a sync
+// that changed nothing has nothing to say.
+func (w *draftsWindow) handleSync(apexapi.Plumb) bool {
+	poke(w.syncing)
 	return true
 }
 
@@ -513,12 +655,13 @@ func (w *draftsWindow) complain(verb string, err error) bool {
 	return true
 }
 
-func (w *draftsWindow) wake() { signal_(w.refresh) }
+// wake asks the loop for a refresh, and keep asks for what has been written to
+// be recorded. Both are asks, not queues: what is wanted is that the thing
+// happens soon, not that it happens once per ask.
+func (w *draftsWindow) wake() { poke(w.refresh) }
+func (w *draftsWindow) keep() { poke(w.keeping) }
 
-// keep asks for what has been written to be recorded.
-func (w *draftsWindow) keep() { signal_(w.keeping) }
-
-func signal_(to chan struct{}) {
+func poke(to chan struct{}) {
 	select {
 	case to <- struct{}{}:
 	default:
@@ -542,12 +685,15 @@ func (w *draftsWindow) keeper(ctx context.Context) {
 		if repo == nil {
 			continue
 		}
-		switch committed, err := repo.commit(); {
+		w.vcsMu.Lock()
+		committed, err := repo.commit()
+		w.vcsMu.Unlock()
+		switch {
 		case err != nil:
 			_ = w.tool.Errors(w.dir.root, fmt.Sprintf("Put: %s: %v\n", repo.name(), err))
 		case committed > 0:
 			// Something was recorded, so there is something to send.
-			signal_(w.pushing)
+			poke(w.pushing)
 		}
 	}
 }
@@ -566,9 +712,61 @@ func (w *draftsWindow) pusher(ctx context.Context) {
 		if repo == nil {
 			continue
 		}
-		if err := repo.push(); err != nil {
+		w.vcsMu.Lock()
+		err := repo.push()
+		w.vcsMu.Unlock()
+		if err != nil {
 			_ = w.tool.Errors(w.dir.root, fmt.Sprintf("Push: %s: %v\n", repo.name(), err))
 		}
+	}
+}
+
+// syncer keeps the directory and its remote in step: every few minutes on its
+// own, and at once when Sync asks. It is a thread of work of its own for the
+// same reason the pusher is — it talks to another machine, and nothing at the
+// keyboard should wait for that.
+func (w *draftsWindow) syncer(ctx context.Context) {
+	ticker := time.NewTicker(syncEvery)
+	defer ticker.Stop()
+	for {
+		asked := false
+		select {
+		case <-ctx.Done():
+			return
+		case <-w.syncing:
+			asked = true
+		case <-ticker.C:
+		}
+		w.sync(asked)
+	}
+}
+
+// sync brings the directory and its remote into step. A sync nobody asked for
+// says nothing unless it moved something or failed; one that was asked for
+// says so either way.
+func (w *draftsWindow) sync(asked bool) {
+	repo := w.dir.repository()
+	if repo == nil {
+		if asked {
+			_ = w.tool.Errors(w.dir.root, "Sync: "+w.dir.root+" is under no version control\n")
+		}
+		return
+	}
+	w.vcsMu.Lock()
+	report, err := repo.sync()
+	w.vcsMu.Unlock()
+	switch {
+	case err != nil:
+		_ = w.tool.Errors(w.dir.root, fmt.Sprintf("Sync: %s: %v\n", repo.name(), err))
+	case asked && report.quiet():
+		_ = w.tool.Errors(w.dir.root, "Sync: already in step\n")
+	case !report.quiet():
+		_ = w.tool.Errors(w.dir.root, "Sync: "+report.String()+"\n")
+	}
+	// A sync that took something down changed the directory, and the listing
+	// should say so.
+	if !report.quiet() {
+		w.wake()
 	}
 }
 

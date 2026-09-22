@@ -37,51 +37,61 @@ func TestSlugIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestCreateDraft(t *testing.T) {
-	d := openDir(t.TempDir())
-	path, at, err := d.createDraft("Air Traffic Control")
-	if err != nil {
-		t.Fatal(err)
+// A draft opens with its title as a heading, and writing begins below it. With
+// nothing to call it, the window opens empty and the first thing typed is the
+// title.
+func TestOpening(t *testing.T) {
+	text, at := opening("Air Traffic Control")
+	if text != "# Air Traffic Control\n\n" {
+		t.Errorf("text: %q", text)
 	}
-	if filepath.Base(path) != "air-traffic-control.md" {
-		t.Errorf("path: %q", path)
+	if at != len([]rune(text)) {
+		t.Errorf("cursor at %d, want %d", at, len([]rune(text)))
 	}
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+	if text, at = opening("  "); text != "" || at != 0 {
+		t.Errorf("with no title: %q, %d", text, at)
 	}
-	if string(content) != "# Air Traffic Control\n\n" {
-		t.Errorf("content: %q", content)
-	}
-	// Writing begins below the heading, which is the end of the text.
-	if at != len([]rune(string(content))) {
-		t.Errorf("cursor at %d, want %d", at, len(content))
+	if text, _ = opening("one\ntwo"); text != "# one two\n\n" {
+		t.Errorf("a title is a line: %q", text)
 	}
 }
 
-// With nothing to call it, the draft opens with its heading empty and the
-// cursor in it: the first thing wanted is what this is about.
-func TestCreateDraftWithNoTitle(t *testing.T) {
-	d := openDir(t.TempDir())
-	path, at, err := d.createDraft("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if filepath.Base(path) != "untitled.md" {
-		t.Errorf("path: %q", path)
-	}
-	if at != 2 {
-		t.Errorf("cursor at %d, want 2 — in the heading", at)
+// Nothing is written until Put, and then what was written names the file.
+func TestSaveDraft(t *testing.T) {
+	for _, test := range []struct{ text, want string }{
+		{"# Air Traffic Control\n\nthe tower\n", "air-traffic-control.md"},
+		{"---\ntitle: From Frontmatter\n---\n\nbody\n", "from-frontmatter.md"},
+		{"just a first line\n\nmore\n", "just-a-first-line.md"},
+		{"", "untitled.md"},
+		{"\n\n   \n", "untitled.md"},
+		{"# [Linked](http://x) title\n", "linked-title.md"},
+	} {
+		d := openDir(t.TempDir())
+		path, err := d.saveDraft(test.text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if filepath.Base(path) != test.want {
+			t.Errorf("saveDraft(%q): got %q, want %q", test.text, filepath.Base(path), test.want)
+		}
+		// What was written is what is on disk: nothing is added to it.
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(content) != test.text {
+			t.Errorf("content: got %q, want %q", content, test.text)
+		}
 	}
 }
 
-func TestCreateDraftNeverOverwrites(t *testing.T) {
+func TestSaveDraftNeverOverwrites(t *testing.T) {
 	d := openDir(t.TempDir())
-	first, _, err := d.createDraft("One")
+	first, err := d.saveDraft("# One\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, _, err := d.createDraft("One")
+	second, err := d.saveDraft("# One\n\na different draft, the same title\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,9 +103,9 @@ func TestCreateDraftNeverOverwrites(t *testing.T) {
 	}
 }
 
-func TestCreateDraftMakesTheDirectory(t *testing.T) {
+func TestSaveDraftMakesTheDirectory(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "nowhere")
-	if _, _, err := openDir(root).createDraft("One"); err != nil {
+	if _, err := openDir(root).saveDraft("# One\n"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "one.md")); err != nil {
@@ -162,7 +172,7 @@ func TestCreateDraftStepsAsideFromANotesName(t *testing.T) {
 	root := t.TempDir()
 	d := openDir(root)
 
-	path, _, err := d.createDraft("Meeting Notes")
+	path, err := d.saveDraft("# Meeting Notes\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,10 +181,10 @@ func TestCreateDraftStepsAsideFromANotesName(t *testing.T) {
 	}
 
 	other := openDir(t.TempDir())
-	if _, _, err = other.createDraft("Meeting"); err != nil {
+	if _, err = other.saveDraft("# Meeting\n"); err != nil {
 		t.Fatal(err)
 	}
-	if path, _, err = other.createDraft("Meeting Notes"); err != nil {
+	if path, err = other.saveDraft("# Meeting Notes\n"); err != nil {
 		t.Fatal(err)
 	}
 	if filepath.Base(path) != "meeting-notes-2.md" {

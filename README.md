@@ -29,13 +29,18 @@ rules `refl` uses, because a line of prose is a wrap and the sentence it
 belongs to is the smallest piece that still says something. `-t` prints recent
 modifications, and `-a` opens an Apex window on the directory: the drafts, most
 recently modified first, a page at a time, with `Search`, `Timeline`, `Get`,
-`New`, `Preview` and `Notes`. Beside a draft may lie its notes,
-`<name>-notes.md`, which `Notes` opens and makes.
+`New`, `Preview`, `Notes` and `Sync`. Beside a draft may lie its notes,
+`<name>-notes.md`, which `Notes` opens and makes. `New` writes nothing — a
+draft's filename comes from its title, and the title is not known until
+something has been written — so it begins the draft in a window of its own, and
+`Put` there names the file after what is in it.
 
-A drafts directory under git or Sapling is committed on every `Put`, and the
-commit is pushed in the background: writing is the only thing asked of the
-writer, and a draft kept nowhere but one disk is not kept. The push is its own
-thread of work, so a remote having a bad day costs nothing at the keyboard.
+A drafts directory under git or Sapling is committed on every `Put`, the commit
+is pushed in the background, and the directory is synced with its remote every
+five minutes: writing is the only thing asked of the writer, and a draft kept
+nowhere but one disk is not kept. The commit, the push and the sync are each
+their own thread of work, so a remote having a bad day costs nothing at the
+keyboard, and a merge that conflicts is undone rather than left behind.
 
 ```sh
 cd drafts

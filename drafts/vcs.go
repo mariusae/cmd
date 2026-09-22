@@ -53,6 +53,30 @@ type vcs interface {
 	// push hands the history to wherever it belongs. A repository with
 	// nowhere to send it is not an error: there is nothing to do.
 	push() error
+	// sync brings the directory and its remote into step, both ways: record
+	// what was written here, take what was written elsewhere, hand this back.
+	sync() (syncReport, error)
+}
+
+// A syncReport says what a sync did, for whoever asked. It is empty when
+// nothing moved, which is the usual answer and not worth saying.
+//
+// It is a list of what happened rather than a set of counts, because the two
+// repositories do not answer the same questions as precisely: git can say how
+// many commits came down, and Sapling is asked to say only that some did.
+type syncReport struct{ parts []string }
+
+func (r *syncReport) add(text string) { r.parts = append(r.parts, text) }
+
+func (r syncReport) quiet() bool { return len(r.parts) == 0 }
+
+func (r syncReport) String() string { return strings.Join(r.parts, ", ") }
+
+func count(many int, thing string) string {
+	if many == 1 {
+		return "1 " + thing
+	}
+	return fmt.Sprintf("%d %ss", many, thing)
 }
 
 // openVCS finds the repository the drafts directory sits in, if it sits in
@@ -194,6 +218,76 @@ func (g *gitVCS) commit() (int, error) {
 		return 0, err
 	}
 	return len(changed), nil
+}
+
+// sync commits what is written here, merges what is on the remote, and pushes
+// the result.
+//
+// A merge that conflicts is undone rather than left behind: a directory half
+// in conflict renders as drafts full of markers, and a sync running behind the
+// writer's back has no business leaving one there to be discovered. The
+// conflict is reported and the directory left where it was, to be merged by
+// hand.
+//
+// Only the commit is held to the drafts directory. Fetching, merging and
+// pushing are about the repository, because that is what a repository is: a
+// drafts directory nested in a larger one syncs the whole of it.
+func (g *gitVCS) sync() (syncReport, error) {
+	var report syncReport
+	committed, err := g.commit()
+	if err != nil {
+		return report, err
+	}
+	if committed > 0 {
+		report.add(count(committed, "draft") + " committed")
+	}
+
+	upstream, err := g.git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+	if err != nil {
+		return report, nil // nowhere to sync with; the commit was the whole job
+	}
+	name := strings.TrimSpace(upstream)
+	if _, err := g.git("fetch", "--quiet"); err != nil {
+		return report, fmt.Errorf("fetching %s: %w", name, err)
+	}
+	behind, ahead, err := g.divergence()
+	if err != nil {
+		return report, err
+	}
+	if behind > 0 {
+		if _, err := g.git("merge", "--no-edit", "@{u}"); err != nil {
+			_, _ = g.git("merge", "--abort")
+			return report, fmt.Errorf("merging %s conflicts; resolve it by hand", name)
+		}
+		report.add(count(behind, "commit") + " pulled")
+		if _, ahead, err = g.divergence(); err != nil {
+			return report, err
+		}
+	}
+	if ahead > 0 {
+		if _, err := g.git("push", "--quiet"); err != nil {
+			return report, fmt.Errorf("pushing to %s: %w", name, err)
+		}
+		report.add(count(ahead, "commit") + " pushed")
+	}
+	return report, nil
+}
+
+// divergence is how far the branch is behind its upstream and ahead of it.
+func (g *gitVCS) divergence() (behind, ahead int, err error) {
+	counts, err := g.git("rev-list", "--left-right", "--count", "@{u}...HEAD")
+	if err != nil {
+		return 0, 0, err
+	}
+	fields := strings.Fields(counts)
+	if len(fields) != 2 {
+		return 0, 0, fmt.Errorf("git rev-list said %q", strings.TrimSpace(counts))
+	}
+	if behind, err = strconv.Atoi(fields[0]); err != nil {
+		return 0, 0, err
+	}
+	ahead, err = strconv.Atoi(fields[1])
+	return behind, ahead, err
 }
 
 func (g *gitVCS) push() error {
@@ -351,6 +445,63 @@ func (s *saplingVCS) push() error {
 	if _, err := s.run("paths", "default"); err != nil {
 		return nil // nowhere to send it
 	}
-	_, err := s.run("push", "--quiet")
+	_, err := s.run("push")
+	return quiet(err)
+}
+
+// sync commits what is written here, pulls what is on the remote, and pushes
+// the result. Where git is asked how far apart the two are, Sapling is asked
+// what the working copy is at, before and after: the answer wanted is whether
+// anything moved, and that much both can say.
+func (s *saplingVCS) sync() (syncReport, error) {
+	var report syncReport
+	committed, err := s.commit()
+	if err != nil {
+		return report, err
+	}
+	if committed > 0 {
+		report.add(count(committed, "draft") + " committed")
+	}
+	if _, err := s.run("paths", "default"); err != nil {
+		return report, nil // nowhere to sync with
+	}
+
+	before := s.head()
+	if _, err := s.run("pull", "--quiet"); err != nil {
+		return report, fmt.Errorf("pulling: %w", err)
+	}
+	if after := s.head(); after != before {
+		report.add("pulled")
+	}
+	// Nothing is quieted here: Mercurial says "no changes found" and exits
+	// non-zero when there was nothing to push, which is how a push that did
+	// nothing is told from one that did something.
+	if _, err := s.run("push"); err != nil {
+		if quiet(err) != nil {
+			return report, fmt.Errorf("pushing: %w", err)
+		}
+	} else {
+		report.add("pushed")
+	}
+	return report, nil
+}
+
+// head is what the working copy stands at, or "" when that cannot be read. It
+// is only ever compared with itself, so an unreadable answer twice over just
+// says nothing moved.
+func (s *saplingVCS) head() string {
+	out, err := s.run("log", "-r", ".", "--template", "{node}")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
+// quiet swallows the one failure that is not one: Mercurial, and Sapling after
+// it, exit non-zero on a push with nothing to push.
+func quiet(err error) error {
+	if err != nil && strings.Contains(err.Error(), "no changes found") {
+		return nil
+	}
 	return err
 }

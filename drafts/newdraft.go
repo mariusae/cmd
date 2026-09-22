@@ -56,22 +56,25 @@ func slugForTitle(title string) string {
 	return dashed
 }
 
-// createDraft writes a new draft for this title and returns its path, and the
-// offset in it writing begins at. A title is a heading, and the body below it
-// is where the draft starts; with no title, writing begins in the heading,
-// since the first thing wanted is what this is about.
-func (d *dir) createDraft(title string) (string, int, error) {
-	title = strings.TrimSpace(title)
-	body := fmt.Sprintf("# %s\n\n", headingSafe(title))
-	at := len([]rune(body))
-	if title == "" {
-		at = len([]rune("# "))
+// opening is what a new draft's window starts with: the title as its heading,
+// and the offset below it where writing begins. With nothing to call it yet,
+// the window opens empty and the first thing typed is the title.
+func opening(title string) (string, int) {
+	if title = strings.TrimSpace(title); title == "" {
+		return "", 0
 	}
-	path, err := d.take(slugForTitle(title), body)
-	if err != nil {
-		return "", 0, err
-	}
-	return path, at, nil
+	text := fmt.Sprintf("# %s\n\n", headingSafe(title))
+	return text, len([]rune(text))
+}
+
+// saveDraft writes a draft begun before it was named: what is written in it
+// names the file, by the same reading the listing names any draft by. The name
+// is taken as it is chosen, so two drafts saved at once cannot land on one
+// file, and a draft with nothing in it yet is `untitled.md`.
+func (d *dir) saveDraft(text string) (string, error) {
+	// deriveTitle falls back on the file's own name, and there is no file yet
+	// — which is the whole point — so it is given none.
+	return d.take(slugForTitle(deriveTitle("", text)), text)
 }
 
 // createNotes writes the notes file for a draft, if it is not there yet, and

@@ -70,21 +70,23 @@ Apex:
     Get               Re-read the directory, showing whatever the window's own
                       first line says: "Search QUERY" runs that search,
                       "Timeline" the timeline, and anything else every draft.
-    New [TITLE]       Write <slug>.md for TITLE and open it, the cursor in the
-                      body. With no title, the selection is one; with neither,
-                      the draft opens with its heading empty and the cursor in
-                      it.
+    New [TITLE]       Begin a draft in a window of its own. TITLE opens it as
+                      the heading; with no title, the selection is one; with
+                      neither, the window opens empty. Nothing is written until
+                      Put, which reads what is there, names the file after it,
+                      and leaves an ordinary draft window behind.
     Preview           Show the draft under the pointer as a page.
     Notes             Open <name>-notes.md, the notes for the draft, making it
                       if it is not there yet.
+    Sync              Bring the directory and its remote into step now.
 
   The window's state is its own text. Edit the first line to "Search whatever"
   or "Timeline" and Get runs it; clear it and Get brings every draft back. A
   body that has been edited is left alone until then, so nothing is typed over.
 
-  New, Search and Notes are offered on the directory's own drafts too, so a
-  draft open in the session can beget one, look for a phrase in it, or be
-  written about.
+  New, Search, Notes and Sync are offered on the directory's own drafts too, so
+  a draft open in the session can beget one, look for a phrase in it, be
+  written about, or be sent on.
 
   Apex previews a Markdown file itself, live against the buffer, and offers
   Preview in the tag of every Markdown window; what it cannot do is preview a
@@ -93,8 +95,15 @@ Apex:
 Version control:
   A drafts directory under git or Sapling is committed on every Put, and the
   commit is pushed in the background. Writing is the only thing asked of the
-  writer; keeping what was written is not a separate chore. A directory under
-  neither is left as it is, and a push that fails says so in +Errors.
+  writer; keeping what was written is not a separate chore.
+
+  While the window is open the directory is synced every five minutes, and Sync
+  does it now: commit what was written here, fetch, take what was written
+  elsewhere, push the result. A sync that moved something says so in +Errors; a
+  sync that changed nothing says nothing unless you asked. A merge that
+  conflicts is undone rather than left behind, and reported.
+
+  A directory under neither git nor Sapling is left entirely as it is.
 
 Options:
   -t        Print recent modifications instead of searching.

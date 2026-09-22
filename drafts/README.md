@@ -144,14 +144,33 @@ commit is pushed in the background.
 Writing is the only thing asked of the writer; keeping what was written is not
 a separate chore, and a draft kept nowhere but this disk is not kept. `Put`
 waits for the disk, which is fast. It never waits for the network: the commit
-is its own thread of work and the push another, so a remote having a bad day
-costs nothing at the keyboard. A push that fails says so in `+Errors`.
+is its own thread of work, the push another and the sync a third, so a remote
+having a bad day costs nothing at the keyboard. A push that fails says so in
+`+Errors`.
 
-Everything asked of version control is held to the drafts directory, so a
-drafts directory nested in a larger repository commits its own files and
-nothing else. A repository with nowhere to send its history is committed and
-left alone; a directory under neither git nor Sapling is left entirely as it
-is, and says nothing about it.
+### Syncing
+
+While the window is open the directory is synced every five minutes, and `Sync`
+does it now: commit what was written here, fetch, take what was written
+elsewhere, push the result. A sync that moved something says so in `+Errors`; a
+sync that changed nothing says nothing unless you asked.
+
+A merge that conflicts is undone rather than left behind — a directory half in
+conflict renders as drafts full of markers, and a sync running behind the
+writer's back has no business leaving one there to be discovered. The conflict
+is reported and the directory is left where it was, to be merged by hand.
+
+Only the commit is held to the drafts directory: a drafts directory nested in a
+larger repository commits its own files and nothing else. Fetching, merging and
+pushing are about the repository, because that is what a repository is, so a
+nested directory syncs the whole of it.
+
+A repository with nowhere to send its history is committed and left alone; a
+directory under neither git nor Sapling is left entirely as it is, and says
+nothing about it unless `Sync` asks.
+
+Anything that writes to the repository takes its turn, so a commit never runs
+into a merge. The turn is taken in the background, never at the keyboard.
 
 `Put` is Apex's own word, taken here for the files of this directory. A rule
 may take one so long as it says which windows it is about, and a handler that
@@ -175,17 +194,43 @@ line. A query on the command line opens the window already searching.
     Timeline          Show recent modifications, as `-t` prints them.
     Get               Re-read the directory, showing whatever the window's own
                       first line says.
-    New [TITLE]       Write `<slug>.md` for TITLE and open it, the cursor in
-                      the body. With no title, the selection is one; with
-                      neither, the draft opens with its heading empty and the
-                      cursor in it.
+    New [TITLE]       Begin a draft in a window of its own; `Put` there names
+                      it. TITLE opens it as the heading, with no title the
+                      selection is one, and with neither the window opens empty.
     Preview           Show the draft under the pointer as a page.
     Notes             Open `<name>-notes.md`, making it if it is not there yet.
+    Sync              Bring the directory and its remote into step now.
 
-`New`, `Search` and `Notes` are offered on the directory's own drafts too, so a
-draft open in the session can beget one, look for a phrase in it, or be written
-about. Those verbs are about real files, not about a window some tool made and
-happened to name like one.
+`New`, `Search`, `Notes` and `Sync` are offered on the directory's own drafts
+too, so a draft open in the session can beget one, look for a phrase in it, be
+written about, or be sent on. Those verbs are about real files, not about a
+window some tool made and happened to name like one.
+
+### A draft begun before it is named
+
+A draft's filename comes from its title, and the title is not known until
+something has been written. So `New` writes nothing: the draft is begun in an
+empty window called `/path/to/drafts+New`, whose `Put` `drafts` answers to. A
+draft thrown away — `Del`, and no `Put` — leaves nothing behind.
+
+A title given to `New` opens the window as its heading rather than naming a
+file, so it is ordinary text that can be rewritten before it is ever a
+filename. What names the file is whatever is there when `Put` comes, read the
+way the listing reads any draft: a frontmatter `title:`, else the first H1,
+else the first line with anything on it, else `untitled`.
+
+The window is then that file's window: said to be clean, since what it holds is
+now what is on disk, and renamed to the file, which is what puts the path in
+its tag. The name comes last on purpose — until the window has it nothing is
+watching the file, so what `drafts` wrote there is never taken for someone
+else's change and read back over the writer's hands. Afterwards it is an
+ordinary draft window, committed on `Put` like any other.
+
+A begun draft is deliberately not claimed as one of `drafts`' own windows,
+though `drafts` made it: it is a draft on its way to being a file, so it wants
+what any file window has — `Undo` and `Redo` while it is written, `Put` in the
+tag as soon as there is something to save, and `Del` asking before it throws
+away what was typed.
 
 ### The window's state is its own text
 
