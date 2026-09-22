@@ -122,7 +122,9 @@ that changed. Blocks separated by no more than one blank line are joined into
 excerpts of up to twenty lines; a semantic block longer than that is still kept
 whole. Saves to the same nearby blocks of a draft within five minutes are one
 entry showing the final text of that writing burst, rather than a stack of its
-intermediate versions.
+intermediate versions. Git history follows renames, so earlier changes stay
+with the draft's current name; moving a draft into `archive/` takes its history
+out of the ordinary timeline too.
 
 ```text
 airport.md:13 8:21PM

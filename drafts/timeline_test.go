@@ -208,6 +208,73 @@ func TestTimelineCoalescingAccountsForInsertedLines(t *testing.T) {
 	}
 }
 
+func TestTimelineKeepsARevisionUnderItsCurrentName(t *testing.T) {
+	root := t.TempDir()
+	gitRepo(t, root)
+	d := openDir(root)
+	write(t, root, "old-name.md", "first paragraph\n\nsecond paragraph\n")
+	if _, err := d.repository().commit(); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "old-name.md", "new first paragraph\n\nsecond paragraph\n")
+	if _, err := d.repository().commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(root, "old-name.md"), filepath.Join(root, "current-name.md")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.repository().commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	changes, err := d.timeline(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].draft.name != "current-name.md" {
+		t.Fatalf("got %v, want one change under current-name.md", changeTexts(changes))
+	}
+	if got := changeTexts(changes)[0]; strings.Contains(got, "old-name.md") || !strings.Contains(got, "second paragraph") {
+		t.Errorf("renamed history: %q", got)
+	}
+}
+
+func TestTimelineLeavesAWholeRenamedDraftInTheArchive(t *testing.T) {
+	root := t.TempDir()
+	gitRepo(t, root)
+	d := openDir(root)
+	write(t, root, "one.md", "# One\n\nbody\n")
+	if _, err := d.repository().commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(d.archiveRoot(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(root, "one.md"), filepath.Join(d.archiveRoot(), "one.md")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.repository().commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	changes, err := d.timeline(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 0 {
+		t.Errorf("archived history appeared under its former name: %v", changeTexts(changes))
+	}
+	d.includeArchive = true
+	changes, err = d.timeline(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(archiveSubdir, "one.md")
+	if len(changes) != 1 || changes[0].draft.name != want {
+		t.Errorf("got %v, want one change under %s", changeTexts(changes), want)
+	}
+}
+
 // Outside version control the timeline is the files' own times, and each
 // draft stands for itself.
 func TestTimelineWithoutAnyVersionControl(t *testing.T) {

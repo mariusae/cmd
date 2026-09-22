@@ -110,7 +110,7 @@ func TestGitCommitIsHeldToTheDraftsDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(history) != 1 || len(history[0].files) != 1 || history[0].files[0] != "one.md" {
+	if len(history) != 1 || len(history[0].files) != 1 || history[0].files[0].name != "one.md" {
 		t.Errorf("history names %v, want [one.md]", history[0].files)
 	}
 	// And the file outside is still untracked, exactly as it was found.
@@ -197,6 +197,50 @@ func TestGitContentAndRevDiff(t *testing.T) {
 	}
 	if firstHunk(diff) == "" {
 		t.Errorf("revDiff has no hunk header:\n%s", diff)
+	}
+}
+
+func TestGitHistoryFollowsRenamesToTheCurrentName(t *testing.T) {
+	root := t.TempDir()
+	gitRepo(t, root)
+	repo := openVCS(root)
+	write(t, root, "old.md", "# One\n")
+	if _, err := repo.commit(); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "old.md", "# One\n\nmore\n")
+	if _, err := repo.commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(root, "old.md"), filepath.Join(root, "new.md")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	history, err := repo.history(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 3 {
+		t.Fatalf("got %d revisions, want 3", len(history))
+	}
+	rename := history[0].files[0]
+	if rename.path != "new.md" || rename.name != "new.md" || rename.from != "old.md" {
+		t.Errorf("rename: got %+v", rename)
+	}
+	for _, revision := range history[1:] {
+		if len(revision.files) != 1 || revision.files[0].path != "old.md" || revision.files[0].name != "new.md" {
+			t.Errorf("historical name was not followed: %+v", revision.files)
+		}
+	}
+	diff, err := repo.revDiff(history[0].id, rename.from, rename.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstHunk(diff) != "" {
+		t.Errorf("a pure rename was rendered as a content change:\n%s", diff)
 	}
 }
 

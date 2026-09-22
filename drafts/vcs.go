@@ -22,11 +22,21 @@ import (
 )
 
 // A revision is one recorded change: what it is called, when it was made, and
-// the files of the drafts directory it touched, named relative to it.
+// the files of the drafts directory it touched.
 type revision struct {
 	id    string
 	when  time.Time
-	files []string
+	files []revisionFile
+}
+
+// A revisionFile keeps both names needed while walking history backwards: path
+// is the file at that revision, while name follows later renames to what the
+// draft is called now. A rename remembers its source path too, so its diff is
+// read as a rename rather than as a whole new file.
+type revisionFile struct {
+	path string
+	name string
+	from string
 }
 
 // A vcs is a repository, as the drafts directory needs one. Paths in and out
@@ -46,8 +56,8 @@ type vcs interface {
 	modTimes(files []string) (map[string]time.Time, error)
 	// content is a file as it stood at a revision.
 	content(rev, rel string) (string, error)
-	// revDiff is the unified diff one revision made to one file.
-	revDiff(rev, rel string) (string, error)
+	// revDiff is the unified diff one revision made to the named paths.
+	revDiff(rev string, paths ...string) (string, error)
 	// commit records everything written in the directory, reporting how many
 	// files that was. Nothing written is no commit and no error, since a Put
 	// that changed nothing has nothing to record.
@@ -155,9 +165,9 @@ func (g *gitVCS) diff(rel string) (string, error) {
 const historyScan = 200
 
 func (g *gitVCS) history(limit int) ([]revision, error) {
-	log, err := g.git("log", "--relative", "--no-renames", "--diff-filter=AM",
+	log, err := g.git("log", "--relative", "--find-renames", "--diff-filter=AMR",
 		"-n", strconv.Itoa(historyScan),
-		"--format=%x1e%H %ct", "--name-only", "--", ".")
+		"--format=%x1e%H %ct", "--name-status", "--", ".")
 	if err != nil {
 		return nil, err
 	}
@@ -166,6 +176,9 @@ func (g *gitVCS) history(limit int) ([]revision, error) {
 
 func parseGitHistory(log string, limit int) []revision {
 	var revisions []revision
+	// As the log is read newest first, aliases carry a historical path through
+	// every later rename to the name the draft has now.
+	aliases := map[string]string{}
 	for _, record := range strings.Split(log, "\x1e") {
 		lines := strings.Split(strings.Trim(record, "\n"), "\n")
 		if len(lines) == 0 || lines[0] == "" {
@@ -180,10 +193,20 @@ func parseGitHistory(log string, limit int) []revision {
 			continue
 		}
 		next := revision{id: id, when: time.Unix(stamp, 0)}
-		for _, rel := range lines[1:] {
-			if rel != "" {
-				next.files = append(next.files, rel)
+		for _, line := range lines[1:] {
+			fields := strings.Split(line, "\t")
+			if len(fields) < 2 {
+				continue
 			}
+			if strings.HasPrefix(fields[0], "R") && len(fields) >= 3 {
+				from, path := fields[1], fields[2]
+				name := renamedTo(aliases, path)
+				next.files = append(next.files, revisionFile{path: path, name: name, from: from})
+				aliases[from] = name
+				continue
+			}
+			path := fields[1]
+			next.files = append(next.files, revisionFile{path: path, name: renamedTo(aliases, path)})
 		}
 		if len(next.files) == 0 {
 			continue
@@ -196,13 +219,20 @@ func parseGitHistory(log string, limit int) []revision {
 	return revisions
 }
 
+func renamedTo(aliases map[string]string, path string) string {
+	if current, ok := aliases[path]; ok {
+		return current
+	}
+	return path
+}
+
 func (g *gitVCS) modTimes(files []string) (map[string]time.Time, error) {
 	times := make(map[string]time.Time, len(files))
 	if len(files) == 0 {
 		return times, nil
 	}
-	args := []string{"log", "--relative", "--no-renames", "--diff-filter=AM",
-		"--format=%x1e%H %ct", "--name-only", "--"}
+	args := []string{"log", "--relative", "--find-renames", "--diff-filter=AMR",
+		"--format=%x1e%H %ct", "--name-status", "--"}
 	args = append(args, files...)
 	log, err := g.git(args...)
 	if err != nil {
@@ -217,8 +247,9 @@ func (g *gitVCS) content(rev, rel string) (string, error) {
 	return g.git("show", rev+":./"+rel)
 }
 
-func (g *gitVCS) revDiff(rev, rel string) (string, error) {
-	return g.git("show", "--relative", "-U0", "--format=", rev, "--", rel)
+func (g *gitVCS) revDiff(rev string, paths ...string) (string, error) {
+	args := []string{"show", "--relative", "-U0", "--format=", rev, "--"}
+	return g.git(append(args, paths...)...)
 }
 
 func (g *gitVCS) commit() (int, error) {
@@ -400,7 +431,7 @@ func parseSaplingHistory(log, prefix string, limit int) []revision {
 		next := revision{id: id, when: time.Unix(seconds, 0)}
 		for _, file := range lines[1:] {
 			if rel, ok := relPath(prefix, file); ok {
-				next.files = append(next.files, rel)
+				next.files = append(next.files, revisionFile{path: rel, name: rel})
 			}
 		}
 		if len(next.files) == 0 {
@@ -440,9 +471,9 @@ func latestTimes(revisions []revision, files []string) map[string]time.Time {
 	times := make(map[string]time.Time, len(files))
 	for _, rev := range revisions {
 		for _, file := range rev.files {
-			if wanted[file] {
-				if _, found := times[file]; !found {
-					times[file] = rev.when
+			if wanted[file.name] {
+				if _, found := times[file.name]; !found {
+					times[file.name] = rev.when
 				}
 			}
 		}
@@ -484,8 +515,9 @@ func (s *saplingVCS) content(rev, rel string) (string, error) {
 	return s.run("cat", "-r", rev, rel)
 }
 
-func (s *saplingVCS) revDiff(rev, rel string) (string, error) {
-	return s.run("diff", "-c", rev, "-U", "0", "--", rel)
+func (s *saplingVCS) revDiff(rev string, paths ...string) (string, error) {
+	args := []string{"diff", "-c", rev, "-U", "0", "--"}
+	return s.run(append(args, paths...)...)
 }
 
 func (s *saplingVCS) commit() (int, error) {

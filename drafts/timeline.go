@@ -197,19 +197,23 @@ func (d *dir) recordedChanges(repo vcs, changes []change, limit int) ([]change, 
 		if !cutoff.IsZero() && rev.when.Before(cutoff) {
 			break
 		}
-		for _, rel := range rev.files {
-			if !d.shows(rel) {
+		for _, file := range rev.files {
+			if !d.shows(file.name) {
 				continue
 			}
-			content, err := repo.content(rev.id, rel)
+			content, err := repo.content(rev.id, file.path)
 			if err != nil {
 				continue
 			}
-			diff, err := repo.revDiff(rev.id, rel)
+			paths := []string{file.path}
+			if file.from != "" {
+				paths = append([]string{file.from}, paths...)
+			}
+			diff, err := repo.revDiff(rev.id, paths...)
 			if err != nil {
 				continue
 			}
-			next, ok := changeAt(d.root, rel, content, diff, false, rev.when)
+			next, ok := changeAt(d.root, file.name, content, diff, false, rev.when)
 			if !ok {
 				continue
 			}

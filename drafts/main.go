@@ -59,6 +59,7 @@ Timeline:
   -t prints recent modifications, newest first, as the full Markdown blocks
   that changed. Nearby blocks are joined, and saves to the same place within
   five minutes are one entry showing the final text of that writing burst.
+  History follows a renamed draft under its current name.
   Under version control it reads the history — every Put is committed, so the
   history is the record of the writing. Elsewhere it reads the files' own times,
   and each draft stands for itself.
