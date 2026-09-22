@@ -101,7 +101,7 @@ func bodyMatches(content string, terms []string) []lineMatch {
 // by its title has no line to anchor to, and stands for itself.
 func blocksFor(content, title string, lines []lineMatch, match matcher) []blockContext {
 	if len(lines) == 0 {
-		return []blockContext{{text: title, line: 1}}
+		return []blockContext{{text: title, line: 1, endLine: 1}}
 	}
 	positions := make([]int, 0, len(lines))
 	for _, line := range lines {

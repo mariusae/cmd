@@ -22,7 +22,8 @@ behavior, dependencies, and installation.
 Markdown files, one per draft, with no index and nothing running. A draft is a
 file, its title is the first thing in it that reads like one — a frontmatter
 `title:`, else the first H1, else the first line with anything on it — and its
-age is the file's own.
+age is its last change in version control, or the file's own time when it is
+unrecorded.
 
 A query prints the Markdown block each match was made in, by the same block
 rules `refl` uses, because a line of prose is a wrap and the sentence it

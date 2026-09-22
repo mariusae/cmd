@@ -21,7 +21,8 @@ Usage:
 A drafts directory is a flat directory of Markdown files, one per draft. There
 is no index and no database: a draft is a file, and its title is a frontmatter
 "title:", else its first H1, else the first line with anything on it, else the
-file's own name. drafts uses -d, else $DRAFTS_DIR, else ~/drafts.
+file's own name. README.md documents the directory and is ignored. drafts uses
+-d, else $DRAFTS_DIR, else ~/drafts.
 
 The one directory under a drafts directory is archive/, where a draft goes when
 it is done with. What is there is left out of the listing, the search and the
@@ -50,10 +51,14 @@ Searching:
         eiusmod tempor incididunt foobar ut labore et dolore magna aliqua
 
   With no query at all, the drafts are listed newest first, one path per line,
-  the form an editor or a shell can use directly.
+  the form an editor or a shell can use directly. Under version control,
+  recency is the last commit that changed each file rather than its checkout
+  time; writing not yet committed keeps its file time.
 
 Timeline:
-  -t prints recent modifications, newest first, as the blocks that changed.
+  -t prints recent modifications, newest first, as the full Markdown blocks
+  that changed. Nearby blocks are joined, and saves to the same place within
+  five minutes are one entry showing the final text of that writing burst.
   Under version control it reads the history — every Put is committed, so the
   history is the record of the writing. Elsewhere it reads the files' own times,
   and each draft stands for itself.

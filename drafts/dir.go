@@ -5,8 +5,8 @@ package main
 //
 // There is nothing else to it — no index, no database, no frontmatter a draft
 // is required to carry. A draft is a file, its title is the first thing in it
-// that reads like one, and its age is the file's own. That is the whole format,
-// which is what makes the directory readable by everything else on the machine.
+// that reads like one, and its age is its last recorded change where there is
+// history, or the file's own time where there is not.
 
 import (
 	"fmt"
@@ -25,6 +25,9 @@ const defaultDir = "drafts"
 // a draft: it is listed with nothing of its own, and belongs to the draft it
 // is named after.
 const notesSuffix = "-notes.md"
+
+// readmeName is documentation for the directory, not one of its drafts.
+const readmeName = "README.md"
 
 // archiveSubdir holds the drafts that are done with. It is the one directory
 // under a drafts directory, and it is not a filing system growing back: it says
@@ -63,6 +66,10 @@ type dir struct {
 	changes     []change
 	changeKey   string
 	changeLimit int
+	// Per-file commit times are expensive enough to read once per revision and
+	// set of visible files, rather than on every refresh of an Apex window.
+	timeKey      string
+	recordedTime map[string]time.Time
 }
 
 type cachedDraft struct {
@@ -119,7 +126,7 @@ func (d *dir) archiveRoot() string { return filepath.Join(d.root, archiveSubdir)
 // this reading is about: a Markdown file of the directory itself, and of the
 // archive when the archive has been asked for.
 func (d *dir) shows(rel string) bool {
-	if !strings.HasSuffix(rel, ".md") || strings.HasPrefix(rel, ".") {
+	if filepath.Base(rel) == readmeName || !strings.HasSuffix(rel, ".md") || strings.HasPrefix(rel, ".") {
 		return false
 	}
 	switch filepath.Dir(rel) {
@@ -138,9 +145,10 @@ func (d *dir) make() error { return os.MkdirAll(d.root, 0o755) }
 // draftFile is a Markdown file found on disk, before it is read. Its name is
 // relative to the drafts directory, so an archived draft says where it is.
 type draftFile struct {
-	path    string
-	name    string
-	modTime time.Time
+	path     string
+	name     string
+	modTime  time.Time // the last edit, from history where one was recorded
+	fileTime time.Time // the filesystem time, for detecting content changes
 }
 
 // walk lists the directory's Markdown files, newest first, and the archive's
@@ -160,8 +168,55 @@ func (d *dir) walk() ([]draftFile, error) {
 		}
 		files = append(files, archived...)
 	}
+	d.applyRecordedTimes(files)
 	byRecency(files)
 	return files, nil
+}
+
+// applyRecordedTimes replaces the incidental filesystem times of clean,
+// tracked files with the times of their last changes in history. A checkout
+// writes many files at once and therefore makes their mtimes say when they were
+// checked out, not when the drafts were last worked on. Files changed or added
+// in the working tree keep their own times: that writing is newer than history.
+func (d *dir) applyRecordedTimes(files []draftFile) {
+	repo := d.repository()
+	if repo == nil || len(files) == 0 {
+		return
+	}
+	names := make([]string, len(files))
+	for index, file := range files {
+		names[index] = file.name
+	}
+
+	// The newest relevant revision and the visible names make a stable cache
+	// key. A newly committed file changes the revision; showing the archive or
+	// adding an untracked file changes the names.
+	latest := ""
+	if revisions, err := repo.history(1); err == nil && len(revisions) > 0 {
+		latest = revisions[0].id
+	}
+	key := latest + "\x00" + strings.Join(names, "\x00")
+	if d.recordedTime == nil || d.timeKey != key {
+		times, err := repo.modTimes(names)
+		if err != nil {
+			return
+		}
+		d.timeKey, d.recordedTime = key, times
+	}
+
+	changed, added := repo.written()
+	dirty := make(map[string]bool, len(changed)+len(added))
+	for _, name := range changed {
+		dirty[name] = true
+	}
+	for _, name := range added {
+		dirty[name] = true
+	}
+	for index := range files {
+		if when, ok := d.recordedTime[files[index].name]; ok && !dirty[files[index].name] {
+			files[index].modTime = when
+		}
+	}
 }
 
 // readDrafts is one directory's Markdown files, named under prefix. A directory
@@ -178,7 +233,7 @@ func readDrafts(root, prefix string) ([]draftFile, error) {
 	var files []draftFile
 	for _, entry := range entries {
 		name := entry.Name()
-		if strings.HasPrefix(name, ".") || !strings.HasSuffix(name, ".md") {
+		if name == readmeName || strings.HasPrefix(name, ".") || !strings.HasSuffix(name, ".md") {
 			continue
 		}
 		// Only regular files: a symlink points outside the directory as far as
@@ -191,17 +246,16 @@ func readDrafts(root, prefix string) ([]draftFile, error) {
 			continue
 		}
 		files = append(files, draftFile{
-			path:    filepath.Join(root, name),
-			name:    filepath.Join(prefix, name),
-			modTime: info.ModTime(),
+			path:     filepath.Join(root, name),
+			name:     filepath.Join(prefix, name),
+			modTime:  info.ModTime(),
+			fileTime: info.ModTime(),
 		})
 	}
 	return files, nil
 }
 
-// byRecency orders files most recently modified first. A drafts directory is
-// written by hand, so the file's own time is when the draft changed, and
-// nothing has to be asked about it.
+// byRecency orders files most recently modified first.
 func byRecency(files []draftFile) {
 	sort.SliceStable(files, func(i, j int) bool {
 		if !files[i].modTime.Equal(files[j].modTime) {
@@ -244,10 +298,10 @@ func (d *dir) list() ([]draft, error) {
 	return drafts, nil
 }
 
-// title names a draft, reusing the last read of a file whose modification time
-// has not moved.
+// title names a draft, reusing the last read of a file whose filesystem time
+// has not moved. The displayed modification time may come from history instead.
 func (d *dir) title(file draftFile) (string, error) {
-	if cached, ok := d.cache[file.path]; ok && cached.modTime.Equal(file.modTime) {
+	if cached, ok := d.cache[file.path]; ok && cached.modTime.Equal(file.fileTime) {
 		return cached.title, nil
 	}
 	content, err := os.ReadFile(file.path)
@@ -255,7 +309,7 @@ func (d *dir) title(file draftFile) (string, error) {
 		return "", err
 	}
 	title := deriveTitle(file.name, string(content))
-	d.cache[file.path] = cachedDraft{modTime: file.modTime, title: title}
+	d.cache[file.path] = cachedDraft{modTime: file.fileTime, title: title}
 	return title, nil
 }
 
@@ -267,7 +321,7 @@ func (d *dir) read(file draftFile) (string, string, error) {
 		return "", "", err
 	}
 	title := deriveTitle(file.name, string(content))
-	d.cache[file.path] = cachedDraft{modTime: file.modTime, title: title}
+	d.cache[file.path] = cachedDraft{modTime: file.fileTime, title: title}
 	return string(content), title, nil
 }
 
@@ -389,7 +443,7 @@ func (d *dir) contains(path string) bool {
 	if err != nil {
 		return false
 	}
-	if !strings.HasSuffix(rel, ".md") || strings.HasPrefix(rel, ".") {
+	if filepath.Base(rel) == readmeName || !strings.HasSuffix(rel, ".md") || strings.HasPrefix(rel, ".") {
 		return false
 	}
 	switch filepath.Dir(rel) {

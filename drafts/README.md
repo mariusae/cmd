@@ -4,9 +4,9 @@
 Markdown files, one per draft.
 
 There is no index and no database. A draft is a file, its title is the first
-thing in it that reads like one, and its age is the file's own. That is the
-whole format, which is what makes the directory readable by everything else on
-the machine.
+thing in it that reads like one, and its age is its last change in version
+control, or the file's own time when it is unrecorded. That is the whole format,
+which is what makes the directory readable by everything else on the machine.
 
 ```sh
 cd drafts
@@ -34,7 +34,8 @@ made the first time something is written into it.
 The listing is flat. A drafts directory is a directory of drafts; a tree of
 them is a filing system, which is a different tool. The one directory under it
 is `archive/`, where a draft goes when it is done with — and that is a flat
-directory of drafts itself.
+directory of drafts itself. An exact `README.md` documents either directory and
+is ignored by the listing, search and timeline.
 
 ## What a draft is called
 
@@ -110,11 +111,18 @@ is parsed with [goldmark](https://github.com/yuin/goldmark), so block structure
 follows CommonMark.
 
 With no query at all, the drafts are listed newest first, one path per line —
-the form an editor or a shell can use directly.
+the form an editor or a shell can use directly. In a git or Sapling repository,
+"newest" is the last commit that changed each file, not the filesystem time a
+checkout happened to give it. Writing not yet committed keeps its file time.
 
 ## Timeline
 
-`-t` prints recent modifications, newest first, as the blocks that changed.
+`-t` prints recent modifications, newest first, as the full Markdown blocks
+that changed. Blocks separated by no more than one blank line are joined into
+excerpts of up to twenty lines; a semantic block longer than that is still kept
+whole. Saves to the same nearby blocks of a draft within five minutes are one
+entry showing the final text of that writing burst, rather than a stack of its
+intermediate versions.
 
 ```text
 airport.md:13 8:21PM
@@ -132,8 +140,7 @@ and a draft never recorded is shown whole — there is no diff to say which part
 of it is new, because all of it is.
 
 Outside version control it reads the files' own times, and each draft stands
-for what it opens with. Unlike a synced notes graph, a drafts directory's
-modification times are real: nothing here rewrites them all at once.
+for what it opens with.
 
 Reading the timeline walks the history and reads a file per change, which is
 more work than a window has any business doing every couple of seconds, so the

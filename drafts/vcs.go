@@ -42,6 +42,8 @@ type vcs interface {
 	diff(rel string) (string, error)
 	// history is the most recent revisions, newest first.
 	history(limit int) ([]revision, error)
+	// modTimes is the last recorded modification time of each named file.
+	modTimes(files []string) (map[string]time.Time, error)
 	// content is a file as it stood at a revision.
 	content(rev, rel string) (string, error)
 	// revDiff is the unified diff one revision made to one file.
@@ -159,6 +161,10 @@ func (g *gitVCS) history(limit int) ([]revision, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseGitHistory(log, limit), nil
+}
+
+func parseGitHistory(log string, limit int) []revision {
 	var revisions []revision
 	for _, record := range strings.Split(log, "\x1e") {
 		lines := strings.Split(strings.Trim(record, "\n"), "\n")
@@ -187,7 +193,22 @@ func (g *gitVCS) history(limit int) ([]revision, error) {
 			break
 		}
 	}
-	return revisions, nil
+	return revisions
+}
+
+func (g *gitVCS) modTimes(files []string) (map[string]time.Time, error) {
+	times := make(map[string]time.Time, len(files))
+	if len(files) == 0 {
+		return times, nil
+	}
+	args := []string{"log", "--relative", "--no-renames", "--diff-filter=AM",
+		"--format=%x1e%H %ct", "--name-only", "--"}
+	args = append(args, files...)
+	log, err := g.git(args...)
+	if err != nil {
+		return nil, err
+	}
+	return latestTimes(parseGitHistory(log, 0), files), nil
 }
 
 func (g *gitVCS) content(rev, rel string) (string, error) {
@@ -356,6 +377,10 @@ func (s *saplingVCS) history(limit int) ([]revision, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseSaplingHistory(log, prefix, limit), nil
+}
+
+func parseSaplingHistory(log, prefix string, limit int) []revision {
 	var revisions []revision
 	for _, record := range strings.Split(log, "\x1e") {
 		lines := strings.Split(strings.Trim(record, "\n"), "\n")
@@ -386,7 +411,46 @@ func (s *saplingVCS) history(limit int) ([]revision, error) {
 			break
 		}
 	}
-	return revisions, nil
+	return revisions
+}
+
+func (s *saplingVCS) modTimes(files []string) (map[string]time.Time, error) {
+	times := make(map[string]time.Time, len(files))
+	if len(files) == 0 {
+		return times, nil
+	}
+	log, err := s.run("log", "--template", historyTemplate, ".")
+	if err != nil {
+		return nil, err
+	}
+	prefix, err := s.prefix()
+	if err != nil {
+		return nil, err
+	}
+	return latestTimes(parseSaplingHistory(log, prefix, 0), files), nil
+}
+
+// latestTimes takes the first occurrence of each wanted file because histories
+// arrive newest first.
+func latestTimes(revisions []revision, files []string) map[string]time.Time {
+	wanted := make(map[string]bool, len(files))
+	for _, file := range files {
+		wanted[file] = true
+	}
+	times := make(map[string]time.Time, len(files))
+	for _, rev := range revisions {
+		for _, file := range rev.files {
+			if wanted[file] {
+				if _, found := times[file]; !found {
+					times[file] = rev.when
+				}
+			}
+		}
+		if len(times) == len(wanted) {
+			break
+		}
+	}
+	return times
 }
 
 // prefix is where the drafts directory sits in the repository, which is what

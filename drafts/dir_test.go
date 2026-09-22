@@ -76,6 +76,117 @@ func TestListIsNewestFirstAndLeavesOutNotes(t *testing.T) {
 	}
 }
 
+// README.md documents a drafts directory; it is not itself a draft. The name
+// is exact, so an ordinary draft deliberately called readme remains visible.
+func TestREADMEIsNotADraft(t *testing.T) {
+	root := testDir(t, map[string]string{
+		"README.md": "# Directory documentation\n\nfind-me\n",
+		"readme.md": "# An ordinary draft\n\nfind-me\n",
+	}, "readme.md", "README.md")
+	d := openDir(root)
+
+	if got := listedNames(t, d); len(got) != 1 || got[0] != "readme.md" {
+		t.Errorf("listing: got %v, want [readme.md]", got)
+	}
+	hits, err := d.search(queryTerms("find-me"), bounds{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].draft.name != "readme.md" {
+		t.Errorf("search: got %v", blockTexts(hits))
+	}
+	changes, err := d.timeline(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].draft.name != "readme.md" {
+		t.Errorf("timeline: got %v", changeTexts(changes))
+	}
+	if d.contains(filepath.Join(root, readmeName)) {
+		t.Error("README.md is handled as a draft window")
+	}
+}
+
+// Git writes files afresh on a checkout, making filesystem times say when the
+// checkout happened. A draft's recorded history still says when it was worked
+// on and is the ordering a listing should preserve.
+func TestListUsesGitHistoryInsteadOfFilesystemTimes(t *testing.T) {
+	root := t.TempDir()
+	gitRepo(t, root)
+	d := openDir(root)
+	first := time.Date(2026, 9, 18, 9, 0, 0, 0, time.UTC)
+	second := first.Add(time.Hour)
+
+	write(t, root, "one.md", "# One\n")
+	t.Setenv("GIT_AUTHOR_DATE", first.Format(time.RFC3339))
+	t.Setenv("GIT_COMMITTER_DATE", first.Format(time.RFC3339))
+	if _, err := d.repository().commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.list(); err != nil { // populate the per-revision time cache
+		t.Fatal(err)
+	}
+	write(t, root, "two.md", "# Two\n")
+	t.Setenv("GIT_AUTHOR_DATE", second.Format(time.RFC3339))
+	t.Setenv("GIT_COMMITTER_DATE", second.Format(time.RFC3339))
+	if _, err := d.repository().commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Deliberately make the on-disk order the reverse of history.
+	if err := os.Chtimes(filepath.Join(root, "one.md"), second.Add(time.Hour), second.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(filepath.Join(root, "two.md"), first.Add(-time.Hour), first.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	drafts, err := d.list()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(drafts) != 2 {
+		t.Fatalf("got %d drafts, want 2", len(drafts))
+	}
+	if drafts[0].name != "two.md" || drafts[1].name != "one.md" {
+		t.Fatalf("got order %v, want [two.md one.md]", []string{drafts[0].name, drafts[1].name})
+	}
+	if !drafts[0].modTime.Equal(second) || !drafts[1].modTime.Equal(first) {
+		t.Errorf("got times %v and %v, want %v and %v", drafts[0].modTime, drafts[1].modTime, second, first)
+	}
+}
+
+// Writing not recorded yet is newer than history and keeps the filesystem time
+// that records when it happened.
+func TestListUsesFilesystemTimeForAnUncommittedChange(t *testing.T) {
+	root := t.TempDir()
+	gitRepo(t, root)
+	d := openDir(root)
+	recorded := time.Date(2026, 9, 18, 9, 0, 0, 0, time.UTC)
+	t.Setenv("GIT_AUTHOR_DATE", recorded.Format(time.RFC3339))
+	t.Setenv("GIT_COMMITTER_DATE", recorded.Format(time.RFC3339))
+	write(t, root, "one.md", "# One\n")
+	if _, err := d.repository().commit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.list(); err != nil { // cache the recorded time first
+		t.Fatal(err)
+	}
+
+	written := recorded.Add(24 * time.Hour)
+	write(t, root, "one.md", "# One\n\nnew writing\n")
+	if err := os.Chtimes(filepath.Join(root, "one.md"), written, written); err != nil {
+		t.Fatal(err)
+	}
+	drafts, err := d.list()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(drafts) != 1 || !drafts[0].modTime.Equal(written) {
+		t.Errorf("got %v, want uncommitted time %v", drafts[0].modTime, written)
+	}
+}
+
 func TestListTitles(t *testing.T) {
 	root := testDir(t, map[string]string{
 		"one.md": "---\ntitle: Titled\n---\n\n# Other\n",

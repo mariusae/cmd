@@ -24,12 +24,18 @@ func TestTimelineShowsTheBlocksThatChanged(t *testing.T) {
 	root := t.TempDir()
 	gitRepo(t, root)
 	d := openDir(root)
+	first := time.Date(2026, 9, 20, 8, 0, 0, 0, time.UTC)
+	second := first.Add(time.Hour)
 
 	write(t, root, "one.md", "# One\n\nthe first paragraph\n\nthe second paragraph\n")
+	t.Setenv("GIT_AUTHOR_DATE", first.Format(time.RFC3339))
+	t.Setenv("GIT_COMMITTER_DATE", first.Format(time.RFC3339))
 	if _, err := d.repository().commit(); err != nil {
 		t.Fatal(err)
 	}
 	write(t, root, "one.md", "# One\n\nthe first paragraph, revised\n\nthe second paragraph\n")
+	t.Setenv("GIT_AUTHOR_DATE", second.Format(time.RFC3339))
+	t.Setenv("GIT_COMMITTER_DATE", second.Format(time.RFC3339))
 	if _, err := d.repository().commit(); err != nil {
 		t.Fatal(err)
 	}
@@ -43,6 +49,25 @@ func TestTimelineShowsTheBlocksThatChanged(t *testing.T) {
 	}
 	if got := changeTexts(changes)[0]; got != "one.md:the first paragraph, revised" {
 		t.Errorf("newest change: got %q", got)
+	}
+}
+
+func TestTimelineIgnoresARecordedREADME(t *testing.T) {
+	root := t.TempDir()
+	gitRepo(t, root)
+	d := openDir(root)
+	write(t, root, readmeName, "# Directory documentation\n")
+	write(t, root, "one.md", "# One\n")
+	if _, err := d.repository().commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	changes, err := d.timeline(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].draft.name != "one.md" {
+		t.Errorf("got %v, want only one.md", changeTexts(changes))
 	}
 }
 
@@ -61,8 +86,8 @@ func TestTimelinePutsTheWorkingTreeFirst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := changeTexts(changes)[0]; got != "one.md:not yet kept" {
-		t.Errorf("got %q, want the uncommitted paragraph first", got)
+	if got := changeTexts(changes)[0]; !strings.Contains(got, "not yet kept") {
+		t.Errorf("got %q, want the uncommitted writing first", got)
 	}
 }
 
@@ -83,8 +108,103 @@ func TestTimelineShowsAnUnrecordedDraftWhole(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Join(changeTexts(changes), "|")
-	if !strings.Contains(got, "two.md:# Two") || !strings.Contains(got, "two.md:brand new") {
+	if !strings.Contains(got, "two.md:# Two\n\nbrand new") {
 		t.Errorf("got %q", got)
+	}
+}
+
+// Nearby changed paragraphs become one source excerpt, but each paragraph is
+// included whole even where only one of its wrapped lines changed. A distant
+// paragraph remains a separate block.
+func TestTimelineCoalescesNearbyWholeBlocks(t *testing.T) {
+	content := "first line\nfirst changed line\n\n" +
+		"second line\nsecond changed line\n\n\n\n" +
+		"distant line\ndistant changed line\n"
+	diff := "@@ -2 +2 @@\n+first changed line\n" +
+		"@@ -5 +5 @@\n+second changed line\n" +
+		"@@ -10 +10 @@\n+distant changed line\n"
+	changed, ok := changeAt("/drafts", "one.md", content, diff, false, time.Now())
+	if !ok {
+		t.Fatal("the changes produced no timeline entry")
+	}
+	if len(changed.blocks) != 2 {
+		t.Fatalf("got %d blocks, want 2: %+v", len(changed.blocks), changed.blocks)
+	}
+	if got, want := changed.blocks[0].text,
+		"first line\nfirst changed line\n\nsecond line\nsecond changed line"; got != want {
+		t.Errorf("nearby block:\n got %q\nwant %q", got, want)
+	}
+	if got, want := changed.blocks[1].text, "distant line\ndistant changed line"; got != want {
+		t.Errorf("distant block:\n got %q\nwant %q", got, want)
+	}
+}
+
+// Several saves in the same place and within one writing burst are one
+// timeline entry showing the final, complete block rather than intermediate
+// versions of it.
+func TestTimelineCoalescesNearbyCommits(t *testing.T) {
+	root := t.TempDir()
+	gitRepo(t, root)
+	d := openDir(root)
+	base := time.Date(2026, 9, 20, 8, 0, 0, 0, time.UTC)
+	commit := func(content string, when time.Time) {
+		t.Helper()
+		write(t, root, "one.md", content)
+		t.Setenv("GIT_AUTHOR_DATE", when.Format(time.RFC3339))
+		t.Setenv("GIT_COMMITTER_DATE", when.Format(time.RFC3339))
+		if _, err := d.repository().commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit("# One\n\nbefore\n", base)
+	commit("# One\n\nfirst revision\n", base.Add(time.Hour))
+	commit("# One\n\nfinal revision\n", base.Add(time.Hour+3*time.Minute))
+
+	changes, err := d.timeline(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 2 {
+		t.Fatalf("got %d changes, want the nearby saves and the old creation", len(changes))
+	}
+	if got := changeTexts(changes)[0]; got != "one.md:final revision" {
+		t.Errorf("coalesced change: got %q, want the final complete paragraph", got)
+	}
+	if !changes[0].when.Equal(base.Add(time.Hour + 3*time.Minute)) {
+		t.Errorf("coalesced change has time %v", changes[0].when)
+	}
+}
+
+// A line inserted above an older update moves that block in the final source.
+// Coalescing follows the unchanged block text to its new location rather than
+// losing it at its obsolete line number.
+func TestTimelineCoalescingAccountsForInsertedLines(t *testing.T) {
+	root := t.TempDir()
+	gitRepo(t, root)
+	d := openDir(root)
+	first := time.Date(2026, 9, 20, 9, 0, 0, 0, time.UTC)
+	commit := func(content string, when time.Time) {
+		t.Helper()
+		write(t, root, "one.md", content)
+		t.Setenv("GIT_AUTHOR_DATE", when.Format(time.RFC3339))
+		t.Setenv("GIT_COMMITTER_DATE", when.Format(time.RFC3339))
+		if _, err := d.repository().commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit("second paragraph\n\nthird paragraph\n", first)
+	commit("first paragraph\n\nsecond paragraph\n\nthird paragraph\n", first.Add(time.Minute))
+
+	changes, err := d.timeline(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("got %d changes, want 1", len(changes))
+	}
+	want := "one.md:first paragraph\n\nsecond paragraph\n\nthird paragraph"
+	if got := changeTexts(changes)[0]; got != want {
+		t.Errorf("coalesced change:\n got %q\nwant %q", got, want)
 	}
 }
 
@@ -225,7 +345,7 @@ func TestTimelineLeavesOutTheArchiveUntilItIsAskedFor(t *testing.T) {
 	}
 	var found bool
 	for _, got := range changeTexts(changes) {
-		found = found || got == filepath.Join(archiveSubdir, "old.md")+":what was put away"
+		found = found || got == filepath.Join(archiveSubdir, "old.md")+":# Old\n\nwhat was put away"
 	}
 	if !found {
 		t.Errorf("the archive is not in the timeline: %v", changeTexts(changes))

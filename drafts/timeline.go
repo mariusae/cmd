@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -23,11 +24,22 @@ import (
 // draft's first commit) does not bury the changes around it.
 const changeBlockLimit = 20
 
+// Changes belong to one writing burst when they touch nearby blocks of the
+// same draft within this long. One blank source line still makes blocks
+// neighbours: it is Markdown's ordinary separator between paragraphs.
+const (
+	changeTimeGap   = 5 * time.Minute
+	changeBlockGap  = 1
+	changeBlockSpan = 20
+)
+
 // A change is one draft as it stood after a change, with the blocks that moved.
 type change struct {
 	draft  draft
 	when   time.Time
+	since  time.Time
 	blocks []blockContext
+	source string
 }
 
 var hunkHeader = regexp.MustCompile(`^@@ -[0-9,]+ \+(\d+)(?:,(\d+))? @@`)
@@ -58,15 +70,7 @@ func (d *dir) readTimeline(limit int) ([]change, error) {
 	if repo == nil {
 		return d.recentChanges(limit)
 	}
-	changes := d.writtenChanges(repo)
-	if len(changes) < limit {
-		recorded, err := d.recordedChanges(repo, limit-len(changes))
-		if err != nil {
-			return nil, err
-		}
-		changes = append(changes, recorded...)
-	}
-	return changes, nil
+	return d.recordedChanges(repo, d.writtenChanges(repo), limit)
 }
 
 // timelineKey is what the timeline was read from: the revision it stands at,
@@ -85,7 +89,7 @@ func (d *dir) timelineKey() (string, error) {
 		}
 	}
 	for _, file := range files {
-		parts = append(parts, fmt.Sprintf("%s@%d", file.name, file.modTime.UnixNano()))
+		parts = append(parts, fmt.Sprintf("%s@%d", file.name, file.fileTime.UnixNano()))
 	}
 	return strings.Join(parts, "\x00"), nil
 }
@@ -113,7 +117,9 @@ func (d *dir) recentChanges(limit int) ([]change, error) {
 				path: file.path, name: file.name, title: title, modTime: file.modTime,
 			},
 			when:   file.modTime,
+			since:  file.modTime,
 			blocks: truncate(blocks, changeBlockLimit),
+			source: content,
 		})
 	}
 	return changes, nil
@@ -171,15 +177,26 @@ func (d *dir) writtenChanges(repo vcs) []change {
 	return changes
 }
 
-// recordedChanges walks the history newest first, one change per file per
-// revision.
-func (d *dir) recordedChanges(repo vcs, limit int) ([]change, error) {
+// recordedChanges walks history newest first, folding nearby edits into the
+// changes already found in the working tree. Once enough changes have been
+// found, it reads through the coalescing window of the last one before
+// stopping, so a page is not left short by several commits collapsing into it.
+func (d *dir) recordedChanges(repo vcs, changes []change, limit int) ([]change, error) {
 	revisions, err := repo.history(0)
 	if err != nil {
 		return nil, err
 	}
-	var changes []change
+	for index := range changes {
+		if changes[index].since.IsZero() {
+			changes[index].since = changes[index].when
+		}
+		changes[index].blocks = coalesceTimelineBlocks(changes[index].source, changes[index].blocks)
+	}
+	cutoff := changeCutoff(changes, limit)
 	for _, rev := range revisions {
+		if !cutoff.IsZero() && rev.when.Before(cutoff) {
+			break
+		}
 		for _, rel := range rev.files {
 			if !d.shows(rel) {
 				continue
@@ -196,13 +213,155 @@ func (d *dir) recordedChanges(repo vcs, limit int) ([]change, error) {
 			if !ok {
 				continue
 			}
-			changes = append(changes, next)
-			if len(changes) >= limit {
-				return changes, nil
+			changes = addTimelineChange(changes, next)
+		}
+		cutoff = changeCutoff(changes, limit)
+	}
+	return truncate(changes, limit), nil
+}
+
+func changeCutoff(changes []change, limit int) time.Time {
+	if limit <= 0 || len(changes) < limit {
+		return time.Time{}
+	}
+	cutoff := changes[0].since.Add(-changeTimeGap)
+	for _, changed := range changes[1:limit] {
+		if next := changed.since.Add(-changeTimeGap); next.Before(cutoff) {
+			cutoff = next
+		}
+	}
+	return cutoff
+}
+
+// addTimelineChange merges an older change into a newer writing burst when
+// both its time and its source range are near. The newer source wins: a burst
+// is shown as it stood after the burst, rather than as a stack of intermediate
+// versions of the same paragraph.
+func addTimelineChange(changes []change, older change) []change {
+	if older.since.IsZero() {
+		older.since = older.when
+	}
+	older.blocks = coalesceTimelineBlocks(older.source, older.blocks)
+	for index := len(changes) - 1; index >= 0; index-- {
+		newer := &changes[index]
+		if newer.draft.name != older.draft.name {
+			continue
+		}
+		if newer.since.Sub(older.when) > changeTimeGap {
+			continue
+		}
+		aligned := alignTimelineBlocks(newer.source, older.blocks)
+		if !nearbyBlocks(newer.blocks, aligned) {
+			continue
+		}
+		newer.blocks = coalesceTimelineBlocks(newer.source, append(newer.blocks, aligned...))
+		if older.since.Before(newer.since) {
+			newer.since = older.since
+		}
+		return changes
+	}
+	return append(changes, older)
+}
+
+func nearbyBlocks(left, right []blockContext) bool {
+	for _, one := range left {
+		for _, other := range right {
+			if blocksCoalesce(one.line, contextEndLine(one), other.line, contextEndLine(other)) {
+				return true
 			}
 		}
 	}
-	return changes, nil
+	return false
+}
+
+func blocksCoalesce(left, leftEnd, right, rightEnd int) bool {
+	if left > right {
+		left, right = right, left
+		leftEnd, rightEnd = rightEnd, leftEnd
+	}
+	if right <= leftEnd {
+		return true
+	}
+	return right-leftEnd-1 <= changeBlockGap && max(leftEnd, rightEnd)-left+1 <= changeBlockSpan
+}
+
+func contextEndLine(block blockContext) int {
+	if block.endLine >= block.line {
+		return block.endLine
+	}
+	return block.line + strings.Count(block.text, "\n")
+}
+
+// alignTimelineBlocks relocates an older complete block when its text still
+// occurs in the newest version. This accounts for lines inserted above it
+// during the same burst; when the text itself changed, its old location remains
+// the best anchor and will overlap the newer context that replaced it.
+func alignTimelineBlocks(source string, blocks []blockContext) []blockContext {
+	aligned := append([]blockContext(nil), blocks...)
+	for index := range aligned {
+		at := strings.Index(source, aligned[index].text)
+		if at < 0 {
+			continue
+		}
+		aligned[index].line = lineNumberAt(source, at)
+		aligned[index].endLine = aligned[index].line + strings.Count(aligned[index].text, "\n")
+	}
+	return aligned
+}
+
+// coalesceTimelineBlocks unions overlapping contexts and contexts separated by
+// at most one blank line. Every range begins and ends at a complete semantic
+// Markdown block; the union therefore never clips the block that was updated.
+func coalesceTimelineBlocks(source string, blocks []blockContext) []blockContext {
+	if len(blocks) < 2 {
+		return blocks
+	}
+	sorted := append([]blockContext(nil), blocks...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].line != sorted[j].line {
+			return sorted[i].line < sorted[j].line
+		}
+		return contextEndLine(sorted[i]) > contextEndLine(sorted[j])
+	})
+
+	type lineRange struct{ first, last int }
+	ranges := make([]lineRange, 0, len(sorted))
+	for _, block := range sorted {
+		next := lineRange{first: block.line, last: contextEndLine(block)}
+		if len(ranges) > 0 && blocksCoalesce(
+			ranges[len(ranges)-1].first, ranges[len(ranges)-1].last, next.first, next.last,
+		) {
+			current := &ranges[len(ranges)-1]
+			if next.last > current.last {
+				current.last = next.last
+			}
+			continue
+		}
+		ranges = append(ranges, next)
+	}
+
+	lines := strings.Split(source, "\n")
+	coalesced := make([]blockContext, 0, len(ranges))
+	for _, span := range ranges {
+		if span.first < 1 {
+			span.first = 1
+		}
+		if span.last > len(lines) {
+			span.last = len(lines)
+		}
+		if span.last < span.first {
+			continue
+		}
+		text := strings.Join(lines[span.first-1:span.last], "\n")
+		text = strings.TrimRight(text, " \t\r\n")
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		coalesced = append(coalesced, blockContext{
+			text: text, line: span.first, endLine: span.last,
+		})
+	}
+	return coalesced
 }
 
 // changeAt builds a change from a file's content and the diff that produced
@@ -213,6 +372,7 @@ func changeAt(root, rel, content, diff string, whole bool, when time.Time) (chan
 		return change{}, false
 	}
 	blocks := prepareBlocks(content).blockContextsAt(positions, nil)
+	blocks = coalesceTimelineBlocks(content, blocks)
 	if len(blocks) == 0 {
 		return change{}, false
 	}
@@ -224,7 +384,9 @@ func changeAt(root, rel, content, diff string, whole bool, when time.Time) (chan
 			modTime: when,
 		},
 		when:   when,
+		since:  when,
 		blocks: truncate(blocks, changeBlockLimit),
+		source: content,
 	}, true
 }
 

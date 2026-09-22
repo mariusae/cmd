@@ -50,11 +50,14 @@ type blockSource struct {
 	frontmatterTitled bool
 }
 
-// A blockContext is one extracted block: its Markdown and the 1-based line of
-// the source it starts on.
+// A blockContext is one extracted block: its Markdown and the inclusive,
+// 1-based lines of the source it came from. A context can omit branches from
+// the middle of a list, so its source extent is recorded rather than inferred
+// from the number of rendered lines.
 type blockContext struct {
-	text string
-	line int
+	text    string
+	line    int
+	endLine int
 }
 
 // prepareBlocks carves the frontmatter off and parses the body.
@@ -527,9 +530,14 @@ func (s *blockSource) blockContextsAt(positions []int, match matcher) []blockCon
 		if len(context.origins) > 0 {
 			origin = context.origins[0]
 		}
+		end := origin
+		if len(context.origins) > 0 {
+			end = context.origins[len(context.origins)-1]
+		}
 		contexts = append(contexts, blockContext{
-			text: text,
-			line: lineNumberAt(s.source, origin+s.bodyOffset),
+			text:    text,
+			line:    lineNumberAt(s.source, origin+s.bodyOffset),
+			endLine: lineNumberAt(s.source, end+s.bodyOffset),
 		})
 	}
 	return contexts
