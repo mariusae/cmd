@@ -105,6 +105,75 @@ func (d *dir) createNotes(path, title string) (string, error) {
 	return notes, nil
 }
 
+// renameDraft files a draft under the title it now carries, and takes its
+// notes with it. It returns where the draft ended up, which is where it
+// already was when the name still fits.
+//
+// The title is read from the file, not from whatever window may be showing it:
+// the name follows what was saved, so a draft renamed is a draft that has been
+// written down. Put first, which is wanted anyway.
+//
+// Nothing is ever overwritten and the two files never come apart: the new name
+// is held before anything moves, a notes file whose new name is taken sends the
+// draft looking for the next one, and a notes file that will not move puts the
+// draft back where it was.
+func (d *dir) renameDraft(path string) (string, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	slug := slugForTitle(deriveTitle("", string(content)))
+	notes := notesFor(path)
+	// notesFor a notes file is itself, which is not a companion to carry.
+	carried := notes != path && exists(notes)
+	if filepath.Base(path) == slug+".md" {
+		return path, nil
+	}
+	for attempt := 1; ; attempt++ {
+		name := slug
+		if attempt > 1 {
+			name = fmt.Sprintf("%s-%d", slug, attempt)
+		}
+		target := filepath.Join(d.root, name+".md")
+		// The same rule a new draft is filed under: a name where another
+		// draft's notes live is already spoken for. The draft being renamed
+		// does not count, since it is leaving.
+		if isNotesName(name+".md") && exists(draftOf(target)) && draftOf(target) != path {
+			continue
+		}
+		// O_EXCL holds the name the moment it is chosen, so nothing else can
+		// take it between looking and moving.
+		file, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if os.IsExist(err) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		if err := file.Close(); err != nil {
+			_ = os.Remove(target)
+			return "", err
+		}
+		if carried && exists(notesFor(target)) {
+			_ = os.Remove(target) // give the name back and look further on
+			continue
+		}
+		if err := os.Rename(path, target); err != nil {
+			_ = os.Remove(target)
+			return "", err
+		}
+		if carried {
+			if err := os.Rename(notes, notesFor(target)); err != nil {
+				// Put the draft back: a draft and its notes under two
+				// different names is worse than neither having moved.
+				_ = os.Rename(target, path)
+				return "", err
+			}
+		}
+		return target, nil
+	}
+}
+
 // take makes <slug>.md and writes body to it, returning the path. A name
 // already taken takes a numeric suffix rather than overwriting anything, and
 // the name is held the moment it is chosen, so two drafts begun at once are

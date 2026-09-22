@@ -45,9 +45,10 @@ throughout: it is bookkeeping, and a draft named `id: 01j…` would be named
 after nothing.
 
 A new draft's filename is a projection of its title — lowercase, letters and
-numbers kept, separator runs collapsed to one dash — and nothing renames it
-afterwards. The file is the draft, and a title that moves is not worth a path
-that moves under everything pointing at it.
+numbers kept, separator runs collapsed to one dash — and nothing renames it on
+its own. The file is the draft, and a title that moves is not worth a path that
+moves under everything pointing at it. `Rename` is how a filename catches up
+with a title when that is what is wanted.
 
 ## Notes
 
@@ -199,12 +200,41 @@ line. A query on the command line opens the window already searching.
                       selection is one, and with neither the window opens empty.
     Preview           Show the draft under the pointer as a page.
     Notes             Open `<name>-notes.md`, making it if it is not there yet.
+    Rename            File the draft under the title it now carries, taking its
+                      notes with it.
     Sync              Bring the directory and its remote into step now.
 
-`New`, `Search`, `Notes` and `Sync` are offered on the directory's own drafts
-too, so a draft open in the session can beget one, look for a phrase in it, be
-written about, or be sent on. Those verbs are about real files, not about a
-window some tool made and happened to name like one.
+`New`, `Search`, `Notes`, `Rename` and `Sync` are offered on the directory's
+own drafts too, so a draft open in the session can beget one, look for a phrase
+in it, be written about, be filed afresh, or be sent on. Those verbs are about
+real files, not about a window some tool made and happened to name like one.
+
+### Renaming
+
+Nothing renames a draft on its own. A filename is a projection of a title, and
+a title rewritten mid-draft would otherwise drag the path out from under
+everything pointing at it — a link, a shell's history, another window. So the
+name stays where it was put, and `Rename` is how it catches up when that is
+what is wanted.
+
+`Rename` reads the title the way the listing reads any draft, slugs it, and
+moves the file there. The title is read from the **file**, not from whatever
+window is showing it: the name follows what was saved, so a draft renamed is a
+draft that has been written down. `Put` first, which is wanted anyway.
+
+Notes go with their draft. A companion is named after the draft it belongs to,
+and a draft that moved out from under one would leave it orphaned — so `Rename`
+in a notes window renames the draft the notes belong to, which is what names
+them both. Orphaned notes, having no draft, are renamed as the draft they are
+listed as.
+
+Nothing is overwritten. The new name is held before anything moves, a name
+already taken takes the next one, and a draft retitled to where another draft's
+notes live steps aside exactly as a new draft would. The two files never come
+apart: a notes name that is taken sends the draft looking further on, and a
+notes file that will not move puts the draft back where it was. The windows
+showing the files follow them, so what is open stays open and its tag says
+where it now lives.
 
 ### A draft begun before it is named
 

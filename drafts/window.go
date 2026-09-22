@@ -55,8 +55,12 @@ const (
 	putVerb = "Put"
 )
 
-// syncVerb brings the directory and its remote into step now.
-const syncVerb = "Sync"
+// syncVerb brings the directory and its remote into step now, and renameVerb
+// files a draft under the title it now carries.
+const (
+	syncVerb   = "Sync"
+	renameVerb = "Rename"
+)
 
 // A row is what one line of a window's body stands for: a draft and the line
 // of it the row came from, or the `more` row that shows the next page.
@@ -250,7 +254,9 @@ func (w *draftsWindow) offer(window *apexapi.Window) error {
 		// Preview to be about.
 		{apexapi.Rule{Verb: "Preview", Window: window, Priority: 100}, w.handlePreview},
 		{apexapi.Rule{Verb: "Notes", Window: window, Priority: 100}, w.handleNotes},
+		{apexapi.Rule{Verb: renameVerb, Window: window, Priority: 100}, w.handleRename},
 		{apexapi.Rule{Verb: "Notes", File: w.filePattern(), Owner: apexapi.NoOwner, Priority: 100}, w.handleNotes},
+		{apexapi.Rule{Verb: renameVerb, File: w.filePattern(), Owner: apexapi.NoOwner, Priority: 100}, w.handleRename},
 		{apexapi.Rule{Verb: searchVerb, File: w.filePattern(), Owner: apexapi.NoOwner, Priority: 100}, w.handleSearch},
 		{apexapi.Rule{Verb: newVerb, File: w.filePattern(), Owner: apexapi.NoOwner, Priority: 100}, w.handleNew},
 		{apexapi.Rule{Verb: syncVerb, File: w.filePattern(), Owner: apexapi.NoOwner, Priority: 100}, w.handleSync},
@@ -502,6 +508,59 @@ func (w *draftsWindow) handleNotes(plumb apexapi.Plumb) bool {
 	// show it; the directory has still moved, and the timeline has.
 	w.wake()
 	return true
+}
+
+// handleRename files a draft under the title it now carries: the draft the
+// window holds, or the one under the pointer. Its notes go with it — a
+// companion is named after its draft, and a draft that moved out from under
+// one would leave it orphaned.
+//
+// Asked of a notes window it renames the draft the notes belong to, which is
+// what names them both; orphaned notes, having no draft, are renamed as the
+// draft they are listed as.
+//
+// The windows showing the files follow them to their new names, so what is
+// open stays open and its tag says where it now lives.
+func (w *draftsWindow) handleRename(plumb apexapi.Plumb) bool {
+	path, ok := w.subject(plumb)
+	if !ok {
+		return false
+	}
+	if draft := draftOf(path); draft != path && exists(draft) {
+		path = draft
+	}
+	notes := notesFor(path)
+	renamed, err := w.dir.renameDraft(path)
+	if err != nil {
+		return w.complain(renameVerb, err)
+	}
+	if renamed == path {
+		return w.complain(renameVerb, fmt.Errorf("already filed as %s", filepath.Base(path)))
+	}
+	w.follow(path, renamed)
+	w.follow(notes, notesFor(renamed))
+	// The directory has moved: it should be recorded, and the listing should
+	// say where things are now.
+	w.keep()
+	w.wake()
+	return true
+}
+
+// follow renames the window showing a file, when one is open, so a draft that
+// moved does not leave a window pointing at a name that is no longer there.
+func (w *draftsWindow) follow(from, to string) {
+	if from == to {
+		return
+	}
+	windows, err := w.tool.Windows()
+	if err != nil {
+		return
+	}
+	for _, candidate := range windows {
+		if candidate.Name == from {
+			_ = w.tool.Window(candidate.ID).Rename(to)
+		}
+	}
 }
 
 // handlePreview shows the draft under the pointer as a page. Apex previews a

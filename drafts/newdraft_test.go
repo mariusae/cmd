@@ -191,3 +191,161 @@ func TestCreateDraftStepsAsideFromANotesName(t *testing.T) {
 		t.Errorf("beside a draft called Meeting: got %q", path)
 	}
 }
+
+// Rename files a draft under the title it now carries.
+func TestRenameDraft(t *testing.T) {
+	root := t.TempDir()
+	d := openDir(root)
+	write(t, root, "old-title.md", "# A New Title\n\nthe body\n")
+
+	renamed, err := d.renameDraft(filepath.Join(root, "old-title.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(renamed) != "a-new-title.md" {
+		t.Errorf("got %q", renamed)
+	}
+	if exists(filepath.Join(root, "old-title.md")) {
+		t.Error("the old name is still there")
+	}
+	content, err := os.ReadFile(renamed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "# A New Title\n\nthe body\n" {
+		t.Errorf("content changed: %q", content)
+	}
+}
+
+// A draft with no heading is named after its first line, the same reading the
+// listing names it by.
+func TestRenameDraftByFirstLine(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "untitled.md", "the opening line\n\nmore\n")
+	renamed, err := openDir(root).renameDraft(filepath.Join(root, "untitled.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(renamed) != "the-opening-line.md" {
+		t.Errorf("got %q", renamed)
+	}
+}
+
+// A name that already fits is left alone, and says so by not moving.
+func TestRenameDraftAlreadyFiled(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "a-new-title.md")
+	write(t, root, "a-new-title.md", "# A New Title\n")
+	renamed, err := openDir(root).renameDraft(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed != path {
+		t.Errorf("got %q, want the path unchanged", renamed)
+	}
+}
+
+// Notes are named after their draft, so they go where it goes.
+func TestRenameDraftCarriesItsNotes(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "old.md", "# A New Title\n")
+	write(t, root, "old-notes.md", "# Notes on Old\n\nwhat I thought\n")
+
+	renamed, err := openDir(root).renameDraft(filepath.Join(root, "old.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(renamed) != "a-new-title.md" {
+		t.Fatalf("got %q", renamed)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "a-new-title-notes.md"))
+	if err != nil {
+		t.Fatalf("the notes did not come along: %v", err)
+	}
+	if !strings.Contains(string(content), "what I thought") {
+		t.Errorf("notes content: %q", content)
+	}
+	if exists(filepath.Join(root, "old-notes.md")) {
+		t.Error("the old notes are still there")
+	}
+}
+
+// Nothing is ever overwritten: a name already taken takes the next one.
+func TestRenameDraftNeverOverwrites(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "taken.md", "# Taken\n\nsomeone else's draft\n")
+	write(t, root, "old.md", "# Taken\n\nthe one being renamed\n")
+
+	renamed, err := openDir(root).renameDraft(filepath.Join(root, "old.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(renamed) != "taken-2.md" {
+		t.Errorf("got %q", renamed)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "taken.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "someone else's draft") {
+		t.Errorf("the draft that was there was overwritten: %q", content)
+	}
+}
+
+// A draft and its notes never come apart: a notes name that is taken sends the
+// draft looking for the next one, rather than leaving the two under different
+// names.
+func TestRenameDraftSkipsATakenNotesName(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "old.md", "# Taken\n")
+	write(t, root, "old-notes.md", "# Notes on Old\n")
+	// The draft's new name is free, but the notes name it implies is not.
+	write(t, root, "taken-notes.md", "# Someone Else's Notes\n")
+
+	renamed, err := openDir(root).renameDraft(filepath.Join(root, "old.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(renamed) != "taken-2.md" {
+		t.Errorf("got %q, want taken-2.md", renamed)
+	}
+	if !exists(filepath.Join(root, "taken-2-notes.md")) {
+		t.Error("the notes did not follow the draft")
+	}
+	content, err := os.ReadFile(filepath.Join(root, "taken-notes.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "Someone Else's") {
+		t.Errorf("the notes that were there were overwritten: %q", content)
+	}
+}
+
+// A draft retitled to something that reads as another draft's companion steps
+// aside, exactly as a new draft would.
+func TestRenameDraftStepsAsideFromANotesName(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "meeting.md", "# Meeting\n")
+	write(t, root, "old.md", "# Meeting Notes\n")
+
+	renamed, err := openDir(root).renameDraft(filepath.Join(root, "old.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(renamed) != "meeting-notes-2.md" {
+		t.Errorf("got %q", renamed)
+	}
+}
+
+// A draft with nothing in it is still a draft, and is filed as untitled.
+func TestRenameAnEmptyDraft(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "old.md", "")
+	renamed, err := openDir(root).renameDraft(filepath.Join(root, "old.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(renamed) != "untitled.md" {
+		t.Errorf("got %q", renamed)
+	}
+}

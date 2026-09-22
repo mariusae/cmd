@@ -78,15 +78,19 @@ Apex:
     Preview           Show the draft under the pointer as a page.
     Notes             Open <name>-notes.md, the notes for the draft, making it
                       if it is not there yet.
+    Rename            File the draft under the title it now carries, taking its
+                      notes with it. The title is read from the file, so Put
+                      first; nothing is overwritten, and a name already taken
+                      takes the next one.
     Sync              Bring the directory and its remote into step now.
 
   The window's state is its own text. Edit the first line to "Search whatever"
   or "Timeline" and Get runs it; clear it and Get brings every draft back. A
   body that has been edited is left alone until then, so nothing is typed over.
 
-  New, Search, Notes and Sync are offered on the directory's own drafts too, so
-  a draft open in the session can beget one, look for a phrase in it, be
-  written about, or be sent on.
+  New, Search, Notes, Rename and Sync are offered on the directory's own drafts
+  too, so a draft open in the session can beget one, look for a phrase in it, be
+  written about, be filed afresh, or be sent on.
 
   Apex previews a Markdown file itself, live against the buffer, and offers
   Preview in the tag of every Markdown window; what it cannot do is preview a
