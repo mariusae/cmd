@@ -193,3 +193,41 @@ func TestOpeningPosition(t *testing.T) {
 		}
 	}
 }
+
+// The history knows what was archived; the timeline says so only when the
+// archive is being shown.
+func TestTimelineLeavesOutTheArchiveUntilItIsAskedFor(t *testing.T) {
+	root := t.TempDir()
+	gitRepo(t, root)
+	d := openDir(root)
+
+	write(t, root, "one.md", "# One\n\nthe first paragraph\n")
+	if err := os.MkdirAll(d.archiveRoot(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, d.archiveRoot(), "old.md", "# Old\n\nwhat was put away\n")
+	if _, err := d.repository().commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	changes, err := d.timeline(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, got := range changeTexts(changes) {
+		if strings.HasPrefix(got, archiveSubdir) {
+			t.Errorf("the archive is in the timeline: %q", got)
+		}
+	}
+	d.includeArchive = true
+	if changes, err = d.timeline(10); err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, got := range changeTexts(changes) {
+		found = found || got == filepath.Join(archiveSubdir, "old.md")+":what was put away"
+	}
+	if !found {
+		t.Errorf("the archive is not in the timeline: %v", changeTexts(changes))
+	}
+}

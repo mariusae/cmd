@@ -32,7 +32,9 @@ a question, so a search of a directory that does not exist finds nothing. It is
 made the first time something is written into it.
 
 The listing is flat. A drafts directory is a directory of drafts; a tree of
-them is a filing system, which is a different tool.
+them is a filing system, which is a different tool. The one directory under it
+is `archive/`, where a draft goes when it is done with — and that is a flat
+directory of drafts itself.
 
 ## What a draft is called
 
@@ -202,12 +204,18 @@ line. A query on the command line opens the window already searching.
     Notes             Open `<name>-notes.md`, making it if it is not there yet.
     Rename            File the draft under the title it now carries, taking its
                       notes with it.
+    Archive           Put the draft away, in the `archive` directory, taking
+                      its notes with it.
+    IncludeArchive    Show what is archived along with the drafts, or stop
+                      showing it.
     Sync              Bring the directory and its remote into step now.
 
-`New`, `Search`, `Notes`, `Rename` and `Sync` are offered on the directory's
-own drafts too, so a draft open in the session can beget one, look for a phrase
-in it, be written about, be filed afresh, or be sent on. Those verbs are about
-real files, not about a window some tool made and happened to name like one.
+`New`, `Search`, `Notes`, `Rename`, `Archive` and `Sync` are offered on the
+directory's own drafts too, so a draft open in the session can beget one, look
+for a phrase in it, be written about, be filed afresh, be put away, or be sent
+on. Those verbs are about real files, not about a window some tool made and
+happened to name like one. `IncludeArchive` is not among them: it is about what
+a window shows, and a draft's window shows a draft.
 
 ### Renaming
 
@@ -235,6 +243,33 @@ apart: a notes name that is taken sends the draft looking further on, and a
 notes file that will not move puts the draft back where it was. The windows
 showing the files follow them, so what is open stays open and its tag says
 where it now lives.
+
+### Archiving
+
+A draft that is done with is not a draft being written, and a flat directory has
+no way to say so about a file it keeps showing. `Archive` moves it into
+`archive/` and out of the listing, the search and the timeline alike.
+
+The filename goes along unchanged. A name is a projection of the title a draft
+carried when it was filed, and being done with is not a retitling: what points
+at the draft under that name points at it still, one directory down. Notes go
+with their draft, exactly as they go with a `Rename`, and nothing is
+overwritten — a name already taken in the archive takes the next one.
+
+`IncludeArchive` shows what is there, and shows it no longer. It is a toggle
+because there is nothing to say: what is archived is either in front of you or
+it is not. It is not a view of its own — the archive appears in whichever view
+is up, listing, search or timeline — and an archived draft's row says `archive`
+after its time, so a window showing both says which is which.
+
+The archive is still the drafts directory. An archived draft is opened, written,
+renamed and committed like any other, and `Rename` there leaves it archived,
+since renaming is about the name. On the command line it is a drafts directory
+of its own:
+
+```sh
+drafts -d ~/drafts/archive foobar
+```
 
 ### A draft begun before it is named
 
@@ -272,12 +307,16 @@ back. So the way to change what the window shows is to edit it and ask:
 ```text
 Search foobar             ← type this at the top, then B2 Get
 Timeline                  ← or this
+IncludeArchive Timeline   ← or this
 ```
+
+`IncludeArchive` comes first when it comes, because it is said of whatever view
+follows it rather than instead of one.
 
 The three views are the whole vocabulary, and a line naming none of them is the
 listing. The one place this misreads is a draft whose title begins with
-`Search` or `Timeline` and happens to be the top row; `Get` there lists the
-directory, which is where you already were.
+`Search`, `Timeline` or `IncludeArchive` and happens to be the top row; `Get`
+there lists the directory, which is where you already were.
 
 Because the text is the state, a body that has been edited is the reader's: the
 refresh that runs every couple of seconds leaves it alone until `Get` or

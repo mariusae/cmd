@@ -55,12 +55,19 @@ const (
 	putVerb = "Put"
 )
 
-// syncVerb brings the directory and its remote into step now, and renameVerb
-// files a draft under the title it now carries.
+// syncVerb brings the directory and its remote into step now, renameVerb files
+// a draft under the title it now carries, and archiveVerb puts one away.
 const (
-	syncVerb   = "Sync"
-	renameVerb = "Rename"
+	syncVerb    = "Sync"
+	renameVerb  = "Rename"
+	archiveVerb = "Archive"
 )
+
+// includeArchiveVerb takes the archive into what the window shows, and takes it
+// back out. It is not a view of its own — the archive is shown alongside the
+// drafts in whichever view is up — so it is written in the first line beside
+// the view rather than instead of it.
+const includeArchiveVerb = "IncludeArchive"
 
 // A row is what one line of a window's body stands for: a draft and the line
 // of it the row came from, or the `more` row that shows the next page.
@@ -223,10 +230,7 @@ func openWindow(d *dir, query string, getenv func(string) string, now func() tim
 
 // openingCommand is the view -a opens on: a search, when a query was given.
 func openingCommand(query string) string {
-	if query = strings.TrimSpace(query); query == "" {
-		return ""
-	}
-	return searchVerb + " " + query
+	return viewCommand{}.searching(query).String()
 }
 
 func windowName(root string) string {
@@ -242,6 +246,9 @@ func (w *draftsWindow) offer(window *apexapi.Window) error {
 	}{
 		{apexapi.Rule{Verb: searchVerb, Window: window, Priority: 100}, w.handleSearch},
 		{apexapi.Rule{Verb: timelineVerb, Window: window, Priority: 100}, w.handleTimeline},
+		// IncludeArchive is about what a window shows, so it is offered only
+		// where there is a listing to show it in.
+		{apexapi.Rule{Verb: includeArchiveVerb, Window: window, Priority: 100}, w.handleIncludeArchive},
 		{apexapi.Rule{Verb: "Get", Window: window, Priority: 100}, w.handleGet},
 		{apexapi.Rule{Verb: newVerb, Window: window, Priority: 100}, w.handleNew},
 		{apexapi.Rule{Verb: syncVerb, Window: window, Priority: 100}, w.handleSync},
@@ -255,8 +262,10 @@ func (w *draftsWindow) offer(window *apexapi.Window) error {
 		{apexapi.Rule{Verb: "Preview", Window: window, Priority: 100}, w.handlePreview},
 		{apexapi.Rule{Verb: "Notes", Window: window, Priority: 100}, w.handleNotes},
 		{apexapi.Rule{Verb: renameVerb, Window: window, Priority: 100}, w.handleRename},
+		{apexapi.Rule{Verb: archiveVerb, Window: window, Priority: 100}, w.handleArchive},
 		{apexapi.Rule{Verb: "Notes", File: w.filePattern(), Owner: apexapi.NoOwner, Priority: 100}, w.handleNotes},
 		{apexapi.Rule{Verb: renameVerb, File: w.filePattern(), Owner: apexapi.NoOwner, Priority: 100}, w.handleRename},
+		{apexapi.Rule{Verb: archiveVerb, File: w.filePattern(), Owner: apexapi.NoOwner, Priority: 100}, w.handleArchive},
 		{apexapi.Rule{Verb: searchVerb, File: w.filePattern(), Owner: apexapi.NoOwner, Priority: 100}, w.handleSearch},
 		{apexapi.Rule{Verb: newVerb, File: w.filePattern(), Owner: apexapi.NoOwner, Priority: 100}, w.handleNew},
 		{apexapi.Rule{Verb: syncVerb, File: w.filePattern(), Owner: apexapi.NoOwner, Priority: 100}, w.handleSync},
@@ -278,13 +287,16 @@ func (w *draftsWindow) offer(window *apexapi.Window) error {
 // under. Rules about them say so rather than guessing at their names.
 func (w *draftsWindow) ownPattern() string { return regexp.QuoteMeta(w.owner) }
 
-// filePattern matches the Markdown files of the drafts directory, and nothing
-// below it: the directory is flat, and a preview window — `<draft>+Preview` —
-// is not one of its files.
+// filePattern matches the Markdown files of the drafts directory and of its
+// archive, and nothing else below it: the directory is flat but for the
+// archive, and a preview window — `<draft>+Preview` — is not one of its files.
+// An archived draft is a draft, and answers to the same words.
 func (w *draftsWindow) filePattern() string {
 	separator := string(filepath.Separator)
+	quoted := regexp.QuoteMeta(separator)
 	return regexp.QuoteMeta(w.dir.root+separator) +
-		`[^` + regexp.QuoteMeta(separator) + `]+\.md`
+		`(?:` + regexp.QuoteMeta(archiveSubdir+separator) + `)?` +
+		`[^` + quoted + `]+\.md`
 }
 
 // ---- the views -----------------------------------------------------------
@@ -297,14 +309,30 @@ func (w *draftsWindow) handleSearch(plumb apexapi.Plumb) bool {
 	if query == "" {
 		query = w.selectedText(plumb)
 	}
-	w.show(openingCommand(query))
+	w.show(w.showing().searching(query))
 	return true
 }
 
 // handleTimeline puts the window on recent modifications, as drafts -t prints
 // them.
 func (w *draftsWindow) handleTimeline(apexapi.Plumb) bool {
-	w.show(timelineVerb)
+	command := w.showing()
+	command.verb, command.args = timelineVerb, ""
+	w.show(command)
+	return true
+}
+
+// handleIncludeArchive takes the archive into what the window is showing, and
+// takes it back out. It is a toggle because there is nothing to say: what is
+// archived is either in front of you or it is not.
+//
+// The view itself is left where it was — the archive is shown in the listing,
+// in a search and in the timeline alike — and the window's first line says so,
+// which is what makes it survive a Get.
+func (w *draftsWindow) handleIncludeArchive(apexapi.Plumb) bool {
+	command := w.showing()
+	command.archive = !command.archive
+	w.show(command)
 	return true
 }
 
@@ -320,44 +348,96 @@ func (w *draftsWindow) handleGet(apexapi.Plumb) bool {
 	return true
 }
 
-// commandOfBody reads what a body says it is showing: its first line, when
-// that line names a view.
-func commandOfBody(text string) string {
+// commandOfBody reads what a body says it is showing: its first line.
+func commandOfBody(text string) viewCommand {
 	first, _, _ := strings.Cut(text, "\n")
-	if verb, args := splitCommand(first); verb != "" {
-		if args == "" {
-			return verb
-		}
-		return verb + " " + args
-	}
-	return ""
+	return parseCommand(first)
 }
 
-// splitCommand names the view a line asks for, and its argument. A line that
-// names no view is the whole listing, which is also what a draft row is — a
-// draft whose title begins with one of these words is the one place this
-// misreads, and Search brings it back.
-func splitCommand(line string) (verb, args string) {
+// A viewCommand is what the main window's first line says: the view it is
+// showing, and whether the archive is part of it. That line is the whole of the
+// window's state, so everything the window can be showing is something a reader
+// can type.
+type viewCommand struct {
+	verb    string // searchVerb, timelineVerb, or none, which is the listing
+	args    string
+	archive bool
+}
+
+// parseCommand reads a first line. A line that names no view is the whole
+// listing, which is also what a draft row is — a draft whose title begins with
+// one of these words is the one place this misreads, and Search brings it back.
+func parseCommand(line string) viewCommand {
 	line = strings.TrimSpace(line)
+	var command viewCommand
+	// The archive comes first, because it is said of whatever view follows it.
+	if rest, ok := cutVerb(line, includeArchiveVerb); ok {
+		command.archive, line = true, rest
+	}
 	for _, known := range viewVerbs {
-		rest, ok := strings.CutPrefix(line, known)
-		if !ok {
-			continue
-		}
-		if rest == "" {
-			return known, ""
-		}
-		if trimmed := strings.TrimLeft(rest, " \t"); len(trimmed) < len(rest) {
-			return known, trimmed
+		if rest, ok := cutVerb(line, known); ok {
+			command.verb, command.args = known, rest
+			break
 		}
 	}
-	return "", ""
+	return command
+}
+
+// cutVerb takes a word off the front of a line: the word alone, or the word and
+// what follows it. A word that merely begins the line's first word is not it.
+func cutVerb(line, verb string) (rest string, ok bool) {
+	rest, ok = strings.CutPrefix(line, verb)
+	switch {
+	case !ok:
+		return "", false
+	case rest == "":
+		return "", true
+	}
+	trimmed := strings.TrimLeft(rest, " \t")
+	if len(trimmed) == len(rest) {
+		return "", false
+	}
+	return trimmed, true
+}
+
+// String is the line that would show this view again, which is the line the
+// window writes and the line Get reads back.
+func (c viewCommand) String() string {
+	var parts []string
+	if c.archive {
+		parts = append(parts, includeArchiveVerb)
+	}
+	if c.verb != "" {
+		parts = append(parts, c.verb)
+	}
+	if c.args != "" {
+		parts = append(parts, c.args)
+	}
+	return strings.Join(parts, " ")
+}
+
+// searching is this view with a query, or the plain listing where there is
+// none: Search with nothing to look for is how the full list comes back.
+// Whether the archive is shown is not the query's business, so it stays.
+func (c viewCommand) searching(query string) viewCommand {
+	if query = strings.TrimSpace(query); query == "" {
+		return viewCommand{archive: c.archive}
+	}
+	c.verb, c.args = searchVerb, query
+	return c
+}
+
+// showing is the view the window is on.
+func (w *draftsWindow) showing() viewCommand {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return parseCommand(w.command)
 }
 
 // show puts the main window on a view, from its first page.
-func (w *draftsWindow) show(command string) {
+func (w *draftsWindow) show(command viewCommand) {
 	w.mu.Lock()
-	w.command, w.main.shown = command, pageSize
+	w.command, w.main.shown = command.String(), pageSize
 	w.mu.Unlock()
 	w.wake()
 }
@@ -541,6 +621,41 @@ func (w *draftsWindow) handleRename(plumb apexapi.Plumb) bool {
 	w.follow(notes, notesFor(renamed))
 	// The directory has moved: it should be recorded, and the listing should
 	// say where things are now.
+	w.keep()
+	w.wake()
+	return true
+}
+
+// handleArchive puts a draft away: the draft the window holds, or the one under
+// the pointer. Its notes go with it, as they go with a rename — a companion is
+// named after its draft, and belongs beside it wherever that is.
+//
+// Asked of a notes window it archives the draft the notes belong to, which
+// takes the notes along; orphaned notes, having no draft, go as the draft they
+// are listed as.
+//
+// The windows showing the files follow them, so a draft archived while it is
+// open stays open, and its tag says where it now lives.
+func (w *draftsWindow) handleArchive(plumb apexapi.Plumb) bool {
+	path, ok := w.subject(plumb)
+	if !ok {
+		return false
+	}
+	if draft := draftOf(path); draft != path && exists(draft) {
+		path = draft
+	}
+	notes := notesFor(path)
+	archived, err := w.dir.archiveDraft(path)
+	if err != nil {
+		return w.complain(archiveVerb, err)
+	}
+	if archived == path {
+		return w.complain(archiveVerb, fmt.Errorf("%s is already archived", filepath.Base(path)))
+	}
+	w.follow(path, archived)
+	w.follow(notes, notesFor(archived))
+	// The directory has moved: it should be recorded, and the listing should
+	// say the draft is no longer among the drafts.
 	w.keep()
 	w.wake()
 	return true
@@ -959,29 +1074,35 @@ func windowNameOf(tool *apexapi.Tool, id int) (string, bool) {
 // render is the main window's body: whichever view its first line names.
 func (w *draftsWindow) render() view {
 	w.mu.Lock()
-	command, shown := w.command, pageSize
+	command, shown := parseCommand(w.command), pageSize
 	if w.main != nil {
 		shown = w.main.shown
 	}
 	w.mu.Unlock()
-	switch verb, args := splitCommand(command); verb {
+	// Whether the archive is shown is said once, here, to whatever is about to
+	// read the directory: the listing, the search and the timeline all come out
+	// of the same walk of it.
+	w.dir.includeArchive = command.archive
+	switch command.verb {
 	case searchVerb:
-		if terms := queryTerms(args); len(terms) > 0 {
-			return w.renderSearch(args, terms, shown)
+		if terms := queryTerms(command.args); len(terms) > 0 {
+			return w.renderSearch(command, terms, shown)
 		}
 	case timelineVerb:
-		return w.renderTimeline(shown)
+		return w.renderTimeline(command, shown)
 	}
-	return w.renderList(shown)
+	// A Search with nothing to look for is the listing, and says so.
+	return w.renderList(viewCommand{archive: command.archive}, shown)
 }
 
 // renderList is every draft, most recently modified first.
-func (w *draftsWindow) renderList(shown int) view {
+func (w *draftsWindow) renderList(command viewCommand, shown int) view {
 	drafts, err := w.dir.list()
 	if err != nil {
 		return failed(err)
 	}
 	page, now := &body{}, w.now()
+	page.header(command.String())
 	if len(drafts) == 0 {
 		page.line("no drafts in " + w.dir.root)
 		return page.view()
@@ -993,7 +1114,7 @@ func (w *draftsWindow) renderList(shown int) view {
 	return page.view()
 }
 
-func (w *draftsWindow) renderSearch(query string, terms []string, shown int) view {
+func (w *draftsWindow) renderSearch(command viewCommand, terms []string, shown int) view {
 	// One draft past the page, so the window knows whether there is more
 	// without searching out blocks nobody has asked to see.
 	hits, err := w.dir.search(terms, bounds{drafts: shown + 1})
@@ -1001,7 +1122,7 @@ func (w *draftsWindow) renderSearch(query string, terms []string, shown int) vie
 		return failed(err)
 	}
 	page := &body{}
-	page.header(searchVerb + " " + query)
+	page.header(command.String())
 	if len(hits) == 0 {
 		page.line("nothing to show")
 		return page.view()
@@ -1015,13 +1136,13 @@ func (w *draftsWindow) renderSearch(query string, terms []string, shown int) vie
 }
 
 // renderTimeline is recent modifications, as drafts -t prints them.
-func (w *draftsWindow) renderTimeline(shown int) view {
+func (w *draftsWindow) renderTimeline(command viewCommand, shown int) view {
 	changes, err := w.dir.timeline(shown + 1)
 	if err != nil {
 		return failed(err)
 	}
 	page := &body{}
-	page.header(timelineVerb)
+	page.header(command.String())
 	if len(changes) == 0 {
 		page.line("nothing to show")
 		return page.view()
@@ -1053,15 +1174,25 @@ func (b *body) add(text string, at row) {
 func (b *body) line(text string) { b.add(text, row{}) }
 
 // header says what the window is showing, phrased as the command that would
-// show it again, so B2 on it re-runs the view.
+// show it again, so B2 on it re-runs the view. A plain listing of the drafts is
+// what a window with nothing at the top shows, and needs no line to say so.
 func (b *body) header(text string) {
+	if text == "" {
+		return
+	}
 	b.line(text)
 	b.line("")
 }
 
-// draft adds a draft's own row: what it is called, then when it last moved.
+// draft adds a draft's own row: what it is called, then when it last moved, and
+// where it is when that is the archive. A window showing both would otherwise
+// say nothing about which of them is put away.
 func (b *body) draft(subject draft, now time.Time) {
-	b.add(subject.title+" "+formatTime(subject.modTime, now), row{path: subject.path})
+	line := subject.title + " " + formatTime(subject.modTime, now)
+	if subject.archived() {
+		line += " " + archiveSubdir
+	}
+	b.add(line, row{path: subject.path})
 }
 
 // entry is one draft and the blocks shown under it, which is how a search and

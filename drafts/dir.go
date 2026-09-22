@@ -26,13 +26,24 @@ const defaultDir = "drafts"
 // is named after.
 const notesSuffix = "-notes.md"
 
+// archiveSubdir holds the drafts that are done with. It is the one directory
+// under a drafts directory, and it is not a filing system growing back: it says
+// only that a draft is no longer being written, which is the one thing a flat
+// directory cannot say about a file it keeps showing. What is there is left out
+// of everything until it is asked for.
+const archiveSubdir = "archive"
+
 // A draft is one Markdown file in the directory.
 type draft struct {
 	path    string // absolute
-	name    string // the file's own name
+	name    string // relative to the drafts directory
 	title   string
 	modTime time.Time
 }
+
+// archived reports whether a draft is one of the archived ones, by where it is
+// filed. A draft is where it is: nothing else records this.
+func (s draft) archived() bool { return filepath.Dir(s.name) == archiveSubdir }
 
 // A dir reads drafts out of a directory, remembering what it has already
 // parsed: a listing runs over every draft, and re-reading each one on every
@@ -40,6 +51,10 @@ type draft struct {
 type dir struct {
 	root  string
 	cache map[string]cachedDraft
+	// includeArchive takes the archive into everything this reads: the
+	// listing, the search and the timeline alike. It is off, because an
+	// archived draft is one put away.
+	includeArchive bool
 	// The repository the directory sits in, looked for once: asking costs a
 	// subprocess, and the answer does not change while the program runs.
 	repo   vcs
@@ -97,22 +112,63 @@ func (d *dir) repository() vcs {
 	return d.repo
 }
 
+// archiveRoot is where archived drafts live.
+func (d *dir) archiveRoot() string { return filepath.Join(d.root, archiveSubdir) }
+
+// shows reports whether a file of the directory, named relative to it, is one
+// this reading is about: a Markdown file of the directory itself, and of the
+// archive when the archive has been asked for.
+func (d *dir) shows(rel string) bool {
+	if !strings.HasSuffix(rel, ".md") || strings.HasPrefix(rel, ".") {
+		return false
+	}
+	switch filepath.Dir(rel) {
+	case ".":
+		return true
+	case archiveSubdir:
+		return d.includeArchive
+	}
+	return false
+}
+
 // make creates the drafts directory, for whatever is about to be written into
 // it.
 func (d *dir) make() error { return os.MkdirAll(d.root, 0o755) }
 
-// draftFile is a Markdown file found on disk, before it is read.
+// draftFile is a Markdown file found on disk, before it is read. Its name is
+// relative to the drafts directory, so an archived draft says where it is.
 type draftFile struct {
 	path    string
 	name    string
 	modTime time.Time
 }
 
-// walk lists the directory's Markdown files, newest first. The listing is flat:
-// a drafts directory is a directory of drafts, and a tree of them is a filing
-// system, which is a different tool.
+// walk lists the directory's Markdown files, newest first, and the archive's
+// too where the archive has been asked for. The listing is flat: a drafts
+// directory is a directory of drafts, and a tree of them is a filing system,
+// which is a different tool. The archive is the one exception, and it is a flat
+// directory of drafts itself.
 func (d *dir) walk() ([]draftFile, error) {
-	entries, err := os.ReadDir(d.root)
+	files, err := readDrafts(d.root, "")
+	if err != nil {
+		return nil, err
+	}
+	if d.includeArchive {
+		archived, err := readDrafts(d.archiveRoot(), archiveSubdir)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, archived...)
+	}
+	byRecency(files)
+	return files, nil
+}
+
+// readDrafts is one directory's Markdown files, named under prefix. A directory
+// that is not there holds no drafts, which is not an error: nothing is created
+// to answer a question.
+func readDrafts(root, prefix string) ([]draftFile, error) {
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -135,12 +191,11 @@ func (d *dir) walk() ([]draftFile, error) {
 			continue
 		}
 		files = append(files, draftFile{
-			path:    filepath.Join(d.root, name),
-			name:    name,
+			path:    filepath.Join(root, name),
+			name:    filepath.Join(prefix, name),
 			modTime: info.ModTime(),
 		})
 	}
-	byRecency(files)
 	return files, nil
 }
 
@@ -167,13 +222,15 @@ func (d *dir) list() ([]draft, error) {
 	if err != nil {
 		return nil, err
 	}
+	// By path, not by name: the archive may hold a draft called what one here
+	// is called, and a companion belongs to the draft beside it.
 	present := make(map[string]bool, len(files))
 	for _, file := range files {
-		present[file.name] = true
+		present[file.path] = true
 	}
 	drafts := make([]draft, 0, len(files))
 	for _, file := range files {
-		if isNotesName(file.name) && present[filepath.Base(draftOf(file.path))] {
+		if isNotesName(file.name) && present[draftOf(file.path)] {
 			continue
 		}
 		title, err := d.title(file)
@@ -236,7 +293,10 @@ func deriveTitle(name, content string) string {
 			return oneLine(trimmed)
 		}
 	}
-	return strings.TrimSuffix(name, ".md")
+	if name == "" {
+		return ""
+	}
+	return strings.TrimSuffix(filepath.Base(name), ".md")
 }
 
 // firstHeading is the text of the first non-empty H1 outside any code fence.
@@ -320,14 +380,23 @@ func draftOf(path string) string {
 		strings.TrimSuffix(name, notesSuffix)+".md")
 }
 
-// contains reports whether a path names a Markdown file of this directory.
+// contains reports whether a path names a Markdown file of this directory, the
+// archive included. An archived draft is still a draft of this directory: it is
+// opened, written and kept like any other, whether or not the listing is
+// showing the archive at the time.
 func (d *dir) contains(path string) bool {
 	rel, err := filepath.Rel(d.root, path)
 	if err != nil {
 		return false
 	}
-	return rel == filepath.Base(rel) && !strings.HasPrefix(rel, ".") &&
-		strings.HasSuffix(rel, ".md")
+	if !strings.HasSuffix(rel, ".md") || strings.HasPrefix(rel, ".") {
+		return false
+	}
+	switch filepath.Dir(rel) {
+	case ".", archiveSubdir:
+		return true
+	}
+	return false
 }
 
 // formatTime shows a timestamp at the resolution that distinguishes it: the

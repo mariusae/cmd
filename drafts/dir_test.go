@@ -115,6 +115,10 @@ func TestContains(t *testing.T) {
 		{"/drafts/a.md", true},
 		{"/drafts/a.md+Preview", false},
 		{"/drafts/sub/a.md", false},
+		// An archived draft is a draft of the directory: it is opened, written
+		// and kept like any other, shown or not.
+		{"/drafts/archive/a.md", true},
+		{"/drafts/archive/sub/a.md", false},
 		{"/drafts/.hidden.md", false},
 		{"/drafts/a.txt", false},
 		{"/elsewhere/a.md", false},
@@ -204,5 +208,123 @@ func TestOrphanedNotesAreListedAsDrafts(t *testing.T) {
 	}
 	if len(got) != 2 || got[0] != "orphan-notes.md" || got[1] != "one.md" {
 		t.Errorf("got %v, want [orphan-notes.md one.md]", got)
+	}
+}
+
+// archiveDir writes an archive under a drafts directory, dating its files a day
+// before testDir dates the drafts: what is put away was worked on before what
+// is not.
+func archiveDir(t *testing.T, root string, files map[string]string, order ...string) {
+	t.Helper()
+	archive := filepath.Join(root, archiveSubdir)
+	if err := os.MkdirAll(archive, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(archive, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base := time.Date(2026, 9, 19, 9, 0, 0, 0, time.Local)
+	for index, name := range order {
+		at := base.Add(time.Duration(index) * time.Hour)
+		if err := os.Chtimes(filepath.Join(archive, name), at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func listedNames(t *testing.T, d *dir) []string {
+	t.Helper()
+	drafts, err := d.list()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, subject := range drafts {
+		names = append(names, subject.name)
+	}
+	return names
+}
+
+// An archived draft is one put away: it is not in the listing until the listing
+// is asked for it.
+func TestListLeavesOutTheArchiveUntilItIsAskedFor(t *testing.T) {
+	root := testDir(t, map[string]string{"one.md": "# One\n"}, "one.md")
+	archiveDir(t, root, map[string]string{"old.md": "# Old\n"}, "old.md")
+
+	d := openDir(root)
+	if got := listedNames(t, d); len(got) != 1 || got[0] != "one.md" {
+		t.Errorf("got %v, want [one.md]", got)
+	}
+	d.includeArchive = true
+	got := listedNames(t, d)
+	want := []string{"one.md", filepath.Join(archiveSubdir, "old.md")}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+// A companion belongs to the draft beside it, in the archive as anywhere else —
+// and a draft of the same name in each directory is two drafts, not one.
+func TestListArchivedNotesBelongToTheArchivedDraft(t *testing.T) {
+	root := testDir(t, map[string]string{
+		"one.md":       "# One\n",
+		"one-notes.md": "# Notes on One\n",
+	}, "one-notes.md", "one.md")
+	archiveDir(t, root, map[string]string{
+		"one.md":       "# An older One\n",
+		"one-notes.md": "# Notes on the older One\n",
+	}, "one-notes.md", "one.md")
+
+	d := openDir(root)
+	d.includeArchive = true
+	got := listedNames(t, d)
+	want := []string{"one.md", filepath.Join(archiveSubdir, "one.md")}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// Orphaned notes are still the only copy of what is written in them, wherever
+// they are.
+func TestListShowsOrphanedArchivedNotes(t *testing.T) {
+	root := testDir(t, map[string]string{"one.md": "# One\n"}, "one.md")
+	archiveDir(t, root, map[string]string{"gone-notes.md": "# Notes on Gone\n"}, "gone-notes.md")
+
+	d := openDir(root)
+	d.includeArchive = true
+	got := listedNames(t, d)
+	if len(got) != 2 || got[1] != filepath.Join(archiveSubdir, "gone-notes.md") {
+		t.Errorf("got %v", got)
+	}
+}
+
+// A draft says where it is filed, so a listing showing both can say which is
+// which.
+func TestDraftArchived(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		want bool
+	}{
+		{"one.md", false},
+		{filepath.Join(archiveSubdir, "one.md"), true},
+		{filepath.Join("sub", "one.md"), false},
+	} {
+		if got := (draft{name: test.name}).archived(); got != test.want {
+			t.Errorf("archived(%q): got %v, want %v", test.name, got, test.want)
+		}
+	}
+}
+
+// A draft's title falls back on the file's own name, not on the path to it.
+func TestTitleOfAnArchivedDraftWithoutOne(t *testing.T) {
+	if got := deriveTitle(filepath.Join(archiveSubdir, "one.md"), "\n"); got != "one" {
+		t.Errorf("got %q, want %q", got, "one")
 	}
 }

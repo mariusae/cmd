@@ -77,7 +77,8 @@ func (d *dir) timelineKey() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	parts := make([]string, 0, len(files)+1)
+	parts := make([]string, 0, len(files)+2)
+	parts = append(parts, fmt.Sprintf("archive=%t", d.includeArchive))
 	if repo := d.repository(); repo != nil {
 		if recent, err := repo.history(1); err == nil && len(recent) > 0 {
 			parts = append(parts, recent[0].id)
@@ -147,7 +148,7 @@ func (d *dir) writtenChanges(repo vcs) []change {
 
 	var changes []change
 	for _, rel := range names {
-		if !strings.HasSuffix(rel, ".md") || strings.HasPrefix(rel, ".") {
+		if !d.shows(rel) {
 			continue
 		}
 		path := filepath.Join(d.root, rel)
@@ -180,7 +181,7 @@ func (d *dir) recordedChanges(repo vcs, limit int) ([]change, error) {
 	var changes []change
 	for _, rev := range revisions {
 		for _, rel := range rev.files {
-			if !strings.HasSuffix(rel, ".md") || strings.HasPrefix(rel, ".") {
+			if !d.shows(rel) {
 				continue
 			}
 			content, err := repo.content(rev.id, rel)

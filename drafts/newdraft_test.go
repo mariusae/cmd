@@ -349,3 +349,113 @@ func TestRenameAnEmptyDraft(t *testing.T) {
 		t.Errorf("got %q", renamed)
 	}
 }
+
+// Archiving puts a draft away under the name it already had: being done with a
+// draft is not retitling it.
+func TestArchiveDraft(t *testing.T) {
+	root := t.TempDir()
+	d := openDir(root)
+	write(t, root, "a-title.md", "# A Title\n\nthe body\n")
+
+	archived, err := d.archiveDraft(filepath.Join(root, "a-title.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(root, archiveSubdir, "a-title.md"); archived != want {
+		t.Errorf("got %q, want %q", archived, want)
+	}
+	if exists(filepath.Join(root, "a-title.md")) {
+		t.Error("the draft is still among the drafts")
+	}
+	content, err := os.ReadFile(archived)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "# A Title\n\nthe body\n" {
+		t.Errorf("content changed: %q", content)
+	}
+}
+
+// Notes belong beside their draft, wherever it is.
+func TestArchiveDraftCarriesItsNotes(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "a-title.md", "# A Title\n")
+	write(t, root, "a-title-notes.md", "# Notes on A Title\n")
+
+	archived, err := openDir(root).archiveDraft(filepath.Join(root, "a-title.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists(notesFor(archived)) {
+		t.Error("the notes stayed behind")
+	}
+	if exists(filepath.Join(root, "a-title-notes.md")) {
+		t.Error("the notes are still among the drafts")
+	}
+}
+
+// A draft already put away is left where it is, and says so by not moving.
+func TestArchiveDraftAlreadyArchived(t *testing.T) {
+	root := t.TempDir()
+	d := openDir(root)
+	write(t, root, "a-title.md", "# A Title\n")
+	archived, err := d.archiveDraft(filepath.Join(root, "a-title.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := d.archiveDraft(archived)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != archived {
+		t.Errorf("got %q, want the path unchanged", again)
+	}
+}
+
+// Nothing is overwritten: a name already taken in the archive takes the next
+// one, and both drafts are still there.
+func TestArchiveDraftNeverOverwrites(t *testing.T) {
+	root := t.TempDir()
+	d := openDir(root)
+	if err := os.MkdirAll(d.archiveRoot(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, d.archiveRoot(), "a-title.md", "# The archived one\n")
+	write(t, root, "a-title.md", "# The new one\n")
+
+	archived, err := d.archiveDraft(filepath.Join(root, "a-title.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(archived) != "a-title-2.md" {
+		t.Errorf("got %q", archived)
+	}
+	kept, err := os.ReadFile(filepath.Join(d.archiveRoot(), "a-title.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(kept) != "# The archived one\n" {
+		t.Errorf("the archived draft was overwritten: %q", kept)
+	}
+}
+
+// Renaming is about the name, so an archived draft retitled stays archived.
+func TestRenameAnArchivedDraftStaysInTheArchive(t *testing.T) {
+	root := t.TempDir()
+	d := openDir(root)
+	write(t, root, "old-title.md", "# Old Title\n")
+	archived, err := d.archiveDraft(filepath.Join(root, "old-title.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archived, []byte("# A New Title\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	renamed, err := d.renameDraft(archived)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(d.archiveRoot(), "a-new-title.md"); renamed != want {
+		t.Errorf("got %q, want %q", renamed, want)
+	}
+}

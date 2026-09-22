@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -153,5 +154,28 @@ func TestSearchIsCaseInsensitive(t *testing.T) {
 	}
 	if len(hits) != 1 || !strings.Contains(hits[0].blocks[0].text, "Widgets") {
 		t.Errorf("got %q", blockTexts(hits))
+	}
+}
+
+// A search is of what is in front of you: the archive is searched only when it
+// is being shown.
+func TestSearchLeavesOutTheArchiveUntilItIsAskedFor(t *testing.T) {
+	root := testDir(t, map[string]string{"one.md": "# One\n"}, "one.md")
+	archiveDir(t, root, map[string]string{"old.md": "# Old\n\nabout widgets\n"}, "old.md")
+
+	d := openDir(root)
+	hits, err := d.search(queryTerms("widgets"), bounds{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 0 {
+		t.Errorf("the archive was searched: %v", blockTexts(hits))
+	}
+	d.includeArchive = true
+	if hits, err = d.search(queryTerms("widgets"), bounds{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := blockTexts(hits); len(got) != 1 || got[0] != filepath.Join(archiveSubdir, "old.md")+":about widgets" {
+		t.Errorf("got %v", got)
 	}
 }

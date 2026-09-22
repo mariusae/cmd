@@ -23,6 +23,10 @@ is no index and no database: a draft is a file, and its title is a frontmatter
 "title:", else its first H1, else the first line with anything on it, else the
 file's own name. drafts uses -d, else $DRAFTS_DIR, else ~/drafts.
 
+The one directory under a drafts directory is archive/, where a draft goes when
+it is done with. What is there is left out of the listing, the search and the
+timeline until it is asked for, and is a drafts directory of its own.
+
 Beside a draft may lie its notes, <name>-notes.md: the same directory, the same
 Markdown, the thinking about the draft rather than the draft. Notes are left
 out of the listing, where a companion would stand beside its draft as though it
@@ -82,15 +86,22 @@ Apex:
                       notes with it. The title is read from the file, so Put
                       first; nothing is overwritten, and a name already taken
                       takes the next one.
+    Archive           Put the draft away, in the archive directory, taking its
+                      notes with it. The filename goes along unchanged: being
+                      done with a draft is not retitling it.
+    IncludeArchive    Show what is archived along with the drafts, or stop
+                      showing it. Not a view of its own: the archive appears in
+                      whichever view is up, and an archived draft's row says so.
     Sync              Bring the directory and its remote into step now.
 
-  The window's state is its own text. Edit the first line to "Search whatever"
-  or "Timeline" and Get runs it; clear it and Get brings every draft back. A
-  body that has been edited is left alone until then, so nothing is typed over.
+  The window's state is its own text. Edit the first line to "Search whatever",
+  "Timeline" or "IncludeArchive Timeline" and Get runs it; clear it and Get
+  brings every draft back. A body that has been edited is left alone until then,
+  so nothing is typed over.
 
-  New, Search, Notes, Rename and Sync are offered on the directory's own drafts
-  too, so a draft open in the session can beget one, look for a phrase in it, be
-  written about, be filed afresh, or be sent on.
+  New, Search, Notes, Rename, Archive and Sync are offered on the directory's
+  own drafts too, so a draft open in the session can beget one, look for a
+  phrase in it, be written about, be filed afresh, be put away, or be sent on.
 
   Apex previews a Markdown file itself, live against the buffer, and offers
   Preview in the tag of every Markdown window; what it cannot do is preview a

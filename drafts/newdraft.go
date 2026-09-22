@@ -112,32 +112,58 @@ func (d *dir) createNotes(path, title string) (string, error) {
 // The title is read from the file, not from whatever window may be showing it:
 // the name follows what was saved, so a draft renamed is a draft that has been
 // written down. Put first, which is wanted anyway.
-//
-// Nothing is ever overwritten and the two files never come apart: the new name
-// is held before anything moves, a notes file whose new name is taken sends the
-// draft looking for the next one, and a notes file that will not move puts the
-// draft back where it was.
 func (d *dir) renameDraft(path string) (string, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
 	slug := slugForTitle(deriveTitle("", string(content)))
-	notes := notesFor(path)
-	// notesFor a notes file is itself, which is not a companion to carry.
-	carried := notes != path && exists(notes)
 	if filepath.Base(path) == slug+".md" {
 		return path, nil
 	}
+	// Into the directory the draft is already in: renaming is about the name,
+	// and an archived draft retitled belongs no less to the archive.
+	return moveDraft(path, filepath.Dir(path), slug)
+}
+
+// archiveDraft puts a draft away: the archive directory of the drafts
+// directory, made if it is not there yet, and the draft's notes with it. It
+// returns where the draft ended up, which is where it already was when it is
+// already archived.
+//
+// The filename goes along unchanged. A draft's name is a projection of the
+// title it had when it was filed, and being done with is not a retitling; what
+// points at the draft under that name points at it still, one directory down.
+func (d *dir) archiveDraft(path string) (string, error) {
+	if filepath.Dir(path) == d.archiveRoot() {
+		return path, nil
+	}
+	if err := os.MkdirAll(d.archiveRoot(), 0o755); err != nil {
+		return "", err
+	}
+	return moveDraft(path, d.archiveRoot(), strings.TrimSuffix(filepath.Base(path), ".md"))
+}
+
+// moveDraft files a draft as <into>/<slug>.md, taking its notes with it, and
+// returns where it landed.
+//
+// Nothing is ever overwritten and the two files never come apart: the new name
+// is held before anything moves, a notes file whose new name is taken sends the
+// draft looking for the next one, and a notes file that will not move puts the
+// draft back where it was.
+func moveDraft(path, into, slug string) (string, error) {
+	notes := notesFor(path)
+	// notesFor a notes file is itself, which is not a companion to carry.
+	carried := notes != path && exists(notes)
 	for attempt := 1; ; attempt++ {
 		name := slug
 		if attempt > 1 {
 			name = fmt.Sprintf("%s-%d", slug, attempt)
 		}
-		target := filepath.Join(d.root, name+".md")
+		target := filepath.Join(into, name+".md")
 		// The same rule a new draft is filed under: a name where another
-		// draft's notes live is already spoken for. The draft being renamed
-		// does not count, since it is leaving.
+		// draft's notes live is already spoken for. The draft being moved does
+		// not count, since it is leaving.
 		if isNotesName(name+".md") && exists(draftOf(target)) && draftOf(target) != path {
 			continue
 		}
