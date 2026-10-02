@@ -35,13 +35,14 @@ func TestApexHookLocation(t *testing.T) {
 }
 
 func TestApexAgentWindowInWorktreePrefersActiveNativeTerminal(t *testing.T) {
+	label := func(value string) *string { return &value }
 	windows := []apexapi.WindowInfo{
-		{ID: 73667279060994, Name: "/repo/task/-devvm", Kind: "file", Live: true},
-		{ID: 1099511627796, Name: "/repo/task/subdir/-project", Kind: "term", Live: true},
-		{ID: 1099511627818, Name: "/repo/task/subdir/-⠸", Kind: "term", Live: true},
-		{ID: 14, Name: "/repo/task/-work", Live: true},
-		{ID: 16, Name: "/repo/task/-stale"},
-		{ID: 18, Name: "/repo/other/-agent", Live: true},
+		{ID: 73667279060994, Path: "/repo/task/", Label: label("devvm"), Kind: "file", Live: true},
+		{ID: 1099511627796, Path: "/repo/task/subdir/", Label: label("project"), Kind: "term", Live: true},
+		{ID: 1099511627818, Path: "/repo/task/subdir/", Label: label("⠸"), Kind: "term", Live: true},
+		{ID: 14, Path: "/repo/task/-work", Live: true},
+		{ID: 16, Path: "/repo/task/", Label: label("stale")},
+		{ID: 18, Path: "/repo/other/", Label: label("agent"), Live: true},
 	}
 	if got, ok := apexAgentWindowInWorktree(windows, "/repo/task"); !ok || got != 1099511627818 {
 		t.Fatalf("apexAgentWindowInWorktree = (%d, %v), want (1099511627818, true)", got, ok)

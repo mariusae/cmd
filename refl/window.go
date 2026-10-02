@@ -805,7 +805,7 @@ func windowNameOf(tool *apexapi.Tool, id int) (string, bool) {
 	}
 	for _, candidate := range windows {
 		if candidate.ID == id {
-			return candidate.Name, true
+			return candidate.Path, true
 		}
 	}
 	return "", false

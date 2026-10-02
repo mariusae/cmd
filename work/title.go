@@ -47,11 +47,11 @@ func agentTitlesFromWindows(repo repository, windows []apexWindow) map[string]st
 		if !window.Live {
 			continue
 		}
-		base := filepath.Base(window.Name)
-		if !strings.HasPrefix(base, "-") {
+		title := apexWindowTitle(window)
+		if title == "" {
 			continue
 		}
-		directory := filepath.Clean(filepath.Dir(window.Name))
+		directory := filepath.Clean(window.Path)
 		var matched *worktree
 		for index := range repo.Worktrees {
 			worktree := &repo.Worktrees[index]
@@ -67,7 +67,7 @@ func agentTitlesFromWindows(repo repository, windows []apexWindow) map[string]st
 			continue
 		}
 		path := filepath.Clean(matched.Path)
-		title := sanitizeAgentTitle(strings.TrimPrefix(base, "-"), matched.handle(), project)
+		title = sanitizeAgentTitle(title, matched.handle(), project)
 		if title != "" {
 			titles[path] = title
 		}

@@ -19,6 +19,7 @@ func TestSanitizeAgentTitleMatchesWorkmuxRules(t *testing.T) {
 }
 
 func TestAgentTitlesFromApexWindowsUsesMostSpecificWorktree(t *testing.T) {
+	label := func(value string) *string { return &value }
 	repo := repository{
 		MainRoot: "/repo",
 		Worktrees: []worktree{
@@ -27,8 +28,8 @@ func TestAgentTitlesFromApexWindowsUsesMostSpecificWorktree(t *testing.T) {
 		},
 	}
 	titles := agentTitlesFromWindows(repo, []apexWindow{
-		{ID: 1, Name: "/repo/.worktrees/feature/-⠋ Fix the tests", Live: true},
-		{ID: 2, Name: "/repo/.worktrees/feature/main.go"},
+		{ID: 1, Path: "/repo/.worktrees/feature/", Label: label("⠋ Fix the tests"), Live: true},
+		{ID: 2, Path: "/repo/.worktrees/feature/main.go"},
 	})
 	if got := titles["/repo/.worktrees/feature"]; got != "Fix the tests" {
 		t.Fatalf("title = %q", got)

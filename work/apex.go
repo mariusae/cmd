@@ -86,9 +86,9 @@ func apexAgentWindowInWorktree(windows []apexapi.WindowInfo, worktreePath string
 	window := 0
 	bestRank := -1
 	for _, candidate := range windows {
-		if !candidate.Live || filepath.Base(candidate.Name) == "-work" ||
-			!strings.HasPrefix(filepath.Base(candidate.Name), "-") ||
-			!windowInWorktree(candidate.Name, worktreePath) {
+		title := apexWindowTitle(candidate)
+		if !candidate.Live || title == "" || title == "work" ||
+			!windowInWorktree(candidate.Path, worktreePath) {
 			continue
 		}
 		rank := apexAgentWindowRank(candidate, worktreePath)
@@ -101,7 +101,7 @@ func apexAgentWindowInWorktree(windows []apexapi.WindowInfo, worktreePath string
 }
 
 func apexAgentWindowRank(window apexapi.WindowInfo, worktreePath string) int {
-	title := strings.TrimPrefix(filepath.Base(window.Name), "-")
+	title := apexWindowTitle(window)
 	rank := 0
 	if window.Kind == "term" {
 		rank += 4
@@ -115,14 +115,21 @@ func apexAgentWindowRank(window apexapi.WindowInfo, worktreePath string) int {
 	return rank
 }
 
+func apexWindowTitle(window apexapi.WindowInfo) string {
+	if window.Label == nil {
+		return ""
+	}
+	return *window.Label
+}
+
 func hasAgentActivityMarker(title string) bool {
 	character, _ := firstRune(title)
 	return character >= '\u2800' && character <= '\u28ff' ||
 		strings.ContainsRune("✳●○◌✓✗", character)
 }
 
-func windowInWorktree(windowName, worktreePath string) bool {
-	directory := filepath.Clean(filepath.Dir(windowName))
+func windowInWorktree(windowPath, worktreePath string) bool {
+	directory := filepath.Clean(windowPath)
 	path := filepath.Clean(worktreePath)
 	return directory == path || strings.HasPrefix(directory, path+string(filepath.Separator))
 }

@@ -672,7 +672,7 @@ func (w *draftsWindow) follow(from, to string) {
 		return
 	}
 	for _, candidate := range windows {
-		if candidate.Name == from {
+		if candidate.Path == from {
 			_ = w.tool.Window(candidate.ID).Rename(to)
 		}
 	}
@@ -1063,7 +1063,7 @@ func windowNameOf(tool *apexapi.Tool, id int) (string, bool) {
 	}
 	for _, candidate := range windows {
 		if candidate.ID == id {
-			return candidate.Name, true
+			return candidate.Path, true
 		}
 	}
 	return "", false
