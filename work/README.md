@@ -6,6 +6,7 @@ designed to be useful as clickable paths in Apex and Acme as well as in a shell.
 ```sh
 work ls
 work new test-feature
+work switch 2026-09-09-test-feature
 work rm /data/users/me/fbsource-2026-09-09-test-feature/
 work note
 work install-hooks
@@ -18,9 +19,11 @@ path, recent agent summaries, and current Sapling change title. The notes file i
 created if necessary. Outside a repository, bare `work` lists the configured
 default repository's linked worktrees. Explicit `work ls` always lists linked
 worktrees and omits the main worktree. `new` creates a dated sibling of the main
-worktree and checks out the current revision. `rm` without an argument removes
-the current worktree, but only when run from a linked worktree. The main
-worktree is never removable.
+worktree, checks out the current revision, and switches to its configured
+session. `work switch` accepts a worktree path or label and switches to its
+session, creating the session if the configured hook does so. `rm` without an
+argument removes the current worktree, but only when run from a linked
+worktree. The main worktree is never removable.
 
 `work note` creates and opens `~/work/HANDLE/working.md` in Apex. An optional
 worktree path or label opens another worktree's notes. The containing directory
@@ -33,6 +36,12 @@ Configuration lives at `~/.config/work/config.yaml`:
 ```yaml
 default: ~/fbsource
 
+session:
+  switch: |
+    name="work-${WORK_HANDLE}"
+    session=$(apex new-session "$name" "$WORK_WORKTREE_PATH")
+    apex switch "$session"
+
 pre_remove:
   - /home/me/.config/work/hooks/pre-remove-cleanup.sh
 ```
@@ -40,9 +49,16 @@ pre_remove:
 When the current directory is not in an EdenFS-backed Sapling repository,
 `default` selects the repository whose worktrees are managed.
 
-Each `pre_remove` entry is run with Bash from the worktree being removed. A
-nonzero exit stops removal. Hooks receive `WORK_HANDLE`, `WORK_WORKTREE_PATH`,
-and `WORK_PROJECT_ROOT`.
+Each `session.switch` or `pre_remove` entry is run with Bash from the selected
+worktree. Hooks receive `WORK_HANDLE`, `WORK_WORKTREE_PATH`, and
+`WORK_PROJECT_ROOT`; a nonzero exit stops the operation. The Apex example is
+idempotent because `apex new-session` returns the existing session when its
+name already exists. A command or a YAML list of commands is accepted for both
+hook types.
+
+`work new` invokes `session.switch` after successfully creating the worktree.
+For compatibility, it remains create-only when no session hook is configured.
+Explicit `work switch` requires a configured hook.
 
 ## Agent status
 

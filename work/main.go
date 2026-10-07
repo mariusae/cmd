@@ -17,6 +17,7 @@ Usage:
   work
   work ls
   work new NAME
+  work switch PATH|LABEL
   work rm [PATH|LABEL]
   work note [PATH|LABEL]
   work status
@@ -31,7 +32,8 @@ worktree-capable repository, it uses the default repository from
 Commands:
   work            Show details for the current worktree, or list the default.
   ls              Print linked worktree paths. The main worktree is omitted.
-  new NAME        Create YYYY-MM-DD-NAME beside the main worktree.
+  new NAME        Create YYYY-MM-DD-NAME and switch to its session.
+  switch TARGET   Switch to a worktree's session, creating it if necessary.
   rm              Remove the current linked worktree.
   rm PATH|LABEL   Remove the selected linked worktree.
   note            Create and open the current worktree's notes file in Apex.
@@ -45,12 +47,17 @@ convenient to use from Apex, Acme, and shells.
 
 Configuration:
   default: ~/fbsource
+  session:
+    switch: |
+      session=$(apex new-session "work-${WORK_HANDLE}" "$WORK_WORKTREE_PATH")
+      apex switch "$session"
   pre_remove:
     - /path/to/pre-remove-cleanup.sh
 
-pre_remove commands run with the worktree as their working directory. They
-receive WORK_HANDLE, WORK_WORKTREE_PATH, and WORK_PROJECT_ROOT. A failing hook
-stops removal.
+session.switch and pre_remove commands run with the worktree as their working
+directory. They receive WORK_HANDLE, WORK_WORKTREE_PATH, and WORK_PROJECT_ROOT.
+A failing hook stops the operation. If session.switch is not configured, new
+retains its old create-only behavior, while switch reports the missing hook.
 `
 
 type command struct {
@@ -85,7 +92,7 @@ func main() {
 func (c command) run(args []string) int {
 	parsed, ok := parseArgs(args)
 	if !ok {
-		fmt.Fprintln(c.stderr, "usage: work [ls] | work new NAME | work rm [PATH|LABEL] | work note [PATH|LABEL] | work status | work -a | work install-hooks (try 'work -help' for help)")
+		fmt.Fprintln(c.stderr, "usage: work [ls] | work new NAME | work switch PATH|LABEL | work rm [PATH|LABEL] | work note [PATH|LABEL] | work status | work -a | work install-hooks (try 'work -help' for help)")
 		return 2
 	}
 	if parsed.action == "help" {
@@ -249,7 +256,25 @@ func (c command) run(args []string) int {
 		if err := c.backend.add(resolved.repo, path, label, c.stderr); err != nil {
 			return c.fail(fmt.Errorf("creating %s: %w", path, err))
 		}
+		if len(cfg.Session.Switch) > 0 {
+			target := worktree{Path: path, Label: label}
+			if err := runWorktreeHooks("session.switch", cfg.Session.Switch, resolved.repo, target, c.stdin, c.stdout, c.stderr); err != nil {
+				return c.fail(fmt.Errorf("created %s, but %w", path, err))
+			}
+		}
 		fmt.Fprintln(c.stdout, directoryPath(path))
+		return 0
+	case "switch":
+		if len(cfg.Session.Switch) == 0 {
+			return c.fail(fmt.Errorf("no session.switch hook is configured in %s", configFile(home)))
+		}
+		target, err := worktreeTarget(resolved.repo, parsed.argument, cwd)
+		if err != nil {
+			return c.fail(err)
+		}
+		if err := runWorktreeHooks("session.switch", cfg.Session.Switch, resolved.repo, target, c.stdin, c.stdout, c.stderr); err != nil {
+			return c.fail(err)
+		}
 		return 0
 	case "rm":
 		target, err := removalTarget(resolved, parsed.argument, cwd)
@@ -259,7 +284,7 @@ func (c command) run(args []string) int {
 		if target.Main {
 			return c.fail(fmt.Errorf("refusing to remove the main worktree at %s", target.Path))
 		}
-		if err := runPreRemoveHooks(cfg.PreRemove, resolved.repo, target, c.stderr); err != nil {
+		if err := runWorktreeHooks("pre_remove", cfg.PreRemove, resolved.repo, target, nil, c.stderr, c.stderr); err != nil {
 			return c.fail(err)
 		}
 		if resolved.fromCurrent && pathsEqual(target.Path, resolved.repo.CurrentRoot) {
@@ -320,6 +345,9 @@ func parseArgs(args []string) (parsedArguments, bool) {
 	}
 	if len(args) == 2 && (args[0] == "new" || args[0] == "add") {
 		return parsedArguments{action: "new", argument: args[1]}, true
+	}
+	if len(args) == 2 && args[0] == "switch" {
+		return parsedArguments{action: "switch", argument: args[1]}, true
 	}
 	if len(args) >= 1 && len(args) <= 2 && (args[0] == "rm" || args[0] == "remove") {
 		if len(args) == 2 {
@@ -534,6 +562,10 @@ func noteTarget(repo repository, argument, cwd string) (worktree, error) {
 	if argument == "" {
 		return currentWorktree(repo)
 	}
+	return worktreeTarget(repo, argument, cwd)
+}
+
+func worktreeTarget(repo repository, argument, cwd string) (worktree, error) {
 	argumentPath := argument
 	if !filepath.IsAbs(argumentPath) {
 		argumentPath = filepath.Join(cwd, argumentPath)
@@ -546,7 +578,7 @@ func noteTarget(repo repository, argument, cwd string) (worktree, error) {
 	return worktree{}, fmt.Errorf("worktree %q not found (use 'work ls' to list worktrees)", argument)
 }
 
-func runPreRemoveHooks(hooks []string, repo repository, target worktree, diagnostics io.Writer) error {
+func runWorktreeHooks(name string, hooks []string, repo repository, target worktree, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(hooks) == 0 {
 		return nil
 	}
@@ -565,10 +597,11 @@ func runPreRemoveHooks(hooks []string, repo repository, target worktree, diagnos
 		cmd := exec.Command("bash", "-c", hook)
 		cmd.Dir = target.Path
 		cmd.Env = environment
-		cmd.Stdout = diagnostics
-		cmd.Stderr = diagnostics
+		cmd.Stdin = stdin
+		cmd.Stdout = stdout
+		cmd.Stderr = stderr
 		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("pre_remove hook failed (%s): %w", hook, err)
+			return fmt.Errorf("%s hook failed (%s): %w", name, hook, err)
 		}
 	}
 	return nil

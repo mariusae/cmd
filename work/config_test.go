@@ -37,6 +37,19 @@ func TestLoadConfigAcceptsSingleHook(t *testing.T) {
 	}
 }
 
+func TestLoadConfigAcceptsSessionSwitchHooks(t *testing.T) {
+	home := t.TempDir()
+	writeConfig(t, home, "session:\n  switch:\n    - first\n    - second\n")
+
+	cfg, err := loadConfig(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (stringList{"first", "second"}); !reflect.DeepEqual(cfg.Session.Switch, want) {
+		t.Fatalf("session.switch = %#v, want %#v", cfg.Session.Switch, want)
+	}
+}
+
 func TestLoadConfigRejectsUnknownFields(t *testing.T) {
 	home := t.TempDir()
 	writeConfig(t, home, "defualt: ~/fbsource\n")
@@ -94,6 +107,15 @@ func TestEmptyHookIsRejected(t *testing.T) {
 	_, err := loadConfig(home)
 	if err == nil {
 		t.Fatal("loadConfig returned nil error")
+	}
+}
+
+func TestEmptySessionSwitchHookIsRejected(t *testing.T) {
+	home := t.TempDir()
+	writeConfig(t, home, "session:\n  switch: '   '\n")
+	_, err := loadConfig(home)
+	if err == nil || !strings.Contains(err.Error(), "session.switch commands must not be empty") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

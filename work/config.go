@@ -15,6 +15,9 @@ import (
 type config struct {
 	Default   string     `yaml:"default"`
 	PreRemove stringList `yaml:"pre_remove"`
+	Session   struct {
+		Switch stringList `yaml:"switch"`
+	} `yaml:"session"`
 }
 
 // stringList accepts both the convenient single-hook form and a YAML list.
@@ -66,6 +69,11 @@ func loadConfig(home string) (config, error) {
 	for _, hook := range result.PreRemove {
 		if strings.TrimSpace(hook) == "" {
 			return config{}, fmt.Errorf("parsing %s: pre_remove commands must not be empty", path)
+		}
+	}
+	for _, hook := range result.Session.Switch {
+		if strings.TrimSpace(hook) == "" {
+			return config{}, fmt.Errorf("parsing %s: session.switch commands must not be empty", path)
 		}
 	}
 	return result, nil

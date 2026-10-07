@@ -22,6 +22,7 @@ type fakeBackend struct {
 	removedPath  string
 	addError     error
 	removeError  error
+	onAdd        func(path string) error
 }
 
 func (b *fakeBackend) name() string { return "sapling" }
@@ -42,6 +43,11 @@ func (b *fakeBackend) latestChangeTitle(path string) (string, error) {
 func (b *fakeBackend) add(_ repository, path, label string, _ io.Writer) error {
 	b.addedPath = path
 	b.addedLabel = label
+	if b.onAdd != nil {
+		if err := b.onAdd(path); err != nil {
+			return err
+		}
+	}
 	return b.addError
 }
 
@@ -212,6 +218,108 @@ func TestNewUsesNumericSuffixForCollision(t *testing.T) {
 	}
 	if b.addedLabel != "2026-09-09-task-2" {
 		t.Fatalf("added label = %q", b.addedLabel)
+	}
+}
+
+func TestNewRunsConfiguredSessionSwitchHook(t *testing.T) {
+	home := t.TempDir()
+	parent := t.TempDir()
+	root := filepath.Join(parent, "fbsource")
+	marker := filepath.Join(parent, "session.txt")
+	hook := fmt.Sprintf("printf '%%s\\n%%s\\n%%s\\n%%s\\n' \"$WORK_HANDLE\" \"$WORK_WORKTREE_PATH\" \"$WORK_PROJECT_ROOT\" \"$PWD\" > %q", marker)
+	writeConfig(t, home, "session:\n  switch: "+hook+"\n")
+	b := &fakeBackend{
+		repositories: map[string]repository{root: testRepository(root, root+"-old")},
+		onAdd: func(path string) error {
+			return os.MkdirAll(path, 0o755)
+		},
+	}
+	c, stdout, stderr := newTestCommand(t, root, home, b)
+
+	if code := c.run([]string{"new", "task"}); code != 0 {
+		t.Fatalf("run returned %d: %s", code, stderr.String())
+	}
+	wantPath := root + "-2026-09-09-task"
+	contents, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantHook := strings.Join([]string{"2026-09-09-task", wantPath, root, wantPath, ""}, "\n")
+	if string(contents) != wantHook {
+		t.Fatalf("hook environment = %q, want %q", contents, wantHook)
+	}
+	if stdout.String() != directoryPath(wantPath)+"\n" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestSwitchRunsConfiguredSessionHook(t *testing.T) {
+	home := t.TempDir()
+	parent := t.TempDir()
+	root := filepath.Join(parent, "fbsource")
+	linked := root + "-2026-09-09-task"
+	if err := os.MkdirAll(linked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(parent, "session.txt")
+	hook := fmt.Sprintf("printf '%%s\\n%%s\\n%%s\\n%%s\\n' \"$WORK_HANDLE\" \"$WORK_WORKTREE_PATH\" \"$WORK_PROJECT_ROOT\" \"$PWD\" > %q", marker)
+	writeConfig(t, home, "session:\n  switch: "+hook+"\n")
+	repo := testRepository(root, linked)
+	repo.Worktrees[1].Label = "2026-09-09-task"
+	b := &fakeBackend{repositories: map[string]repository{root: repo}}
+	c, stdout, stderr := newTestCommand(t, root, home, b)
+
+	if code := c.run([]string{"switch", linked}); code != 0 {
+		t.Fatalf("run returned %d: %s", code, stderr.String())
+	}
+	contents, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Join([]string{"2026-09-09-task", linked, root, linked, ""}, "\n")
+	if string(contents) != want {
+		t.Fatalf("hook environment = %q, want %q", contents, want)
+	}
+	if stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	}
+}
+
+func TestSwitchRequiresConfiguredSessionHook(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(t.TempDir(), "fbsource")
+	linked := root + "-task"
+	b := &fakeBackend{repositories: map[string]repository{root: testRepository(root, linked)}}
+	c, _, stderr := newTestCommand(t, root, home, b)
+
+	if code := c.run([]string{"switch", linked}); code != 1 {
+		t.Fatalf("run returned %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "no session.switch hook is configured") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestFailingSessionHookReportsCreatedWorktree(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(t.TempDir(), "fbsource")
+	writeConfig(t, home, "session:\n  switch: false\n")
+	b := &fakeBackend{
+		repositories: map[string]repository{root: testRepository(root, root+"-old")},
+		onAdd: func(path string) error {
+			return os.MkdirAll(path, 0o755)
+		},
+	}
+	c, stdout, stderr := newTestCommand(t, root, home, b)
+
+	if code := c.run([]string{"new", "task"}); code != 1 {
+		t.Fatalf("run returned %d, want 1", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "created "+b.addedPath) || !strings.Contains(stderr.String(), "session.switch hook failed") {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
 
@@ -393,6 +501,9 @@ func TestParseDashboardCommands(t *testing.T) {
 	}
 	if parsed, ok := parseArgs([]string{"note", "task"}); !ok || parsed.action != "note" || parsed.argument != "task" {
 		t.Fatalf("parseArgs(note task) = (%#v, %v)", parsed, ok)
+	}
+	if parsed, ok := parseArgs([]string{"switch", "task"}); !ok || parsed.action != "switch" || parsed.argument != "task" {
+		t.Fatalf("parseArgs(switch task) = (%#v, %v)", parsed, ok)
 	}
 }
 
