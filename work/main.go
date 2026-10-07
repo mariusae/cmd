@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -33,7 +34,7 @@ Commands:
   work            Show details for the current worktree, or list the default.
   ls              Print linked worktree paths. The main worktree is omitted.
   new NAME        Create YYYY-MM-DD-NAME and switch to its session.
-  switch TARGET   Switch to a worktree's session, creating it if necessary.
+  switch TARGET   Switch by path, label, or newest partial label match.
   rm              Remove the current linked worktree.
   rm PATH|LABEL   Remove the selected linked worktree.
   note            Create and open the current worktree's notes file in Apex.
@@ -268,7 +269,7 @@ func (c command) run(args []string) int {
 		if len(cfg.Session.Switch) == 0 {
 			return c.fail(fmt.Errorf("no session.switch hook is configured in %s", configFile(home)))
 		}
-		target, err := worktreeTarget(resolved.repo, parsed.argument, cwd)
+		target, err := switchTarget(resolved.repo, parsed.argument, cwd)
 		if err != nil {
 			return c.fail(err)
 		}
@@ -574,6 +575,25 @@ func worktreeTarget(repo repository, argument, cwd string) (worktree, error) {
 		if pathsEqual(candidate.Path, argumentPath) || candidate.Label == argument || candidate.handle() == argument {
 			return candidate, nil
 		}
+	}
+	return worktree{}, fmt.Errorf("worktree %q not found (use 'work ls' to list worktrees)", argument)
+}
+
+func switchTarget(repo repository, argument, cwd string) (worktree, error) {
+	if target, err := worktreeTarget(repo, argument, cwd); err == nil {
+		return target, nil
+	}
+	var matches []worktree
+	for _, candidate := range repo.Worktrees {
+		if strings.Contains(candidate.handle(), argument) {
+			matches = append(matches, candidate)
+		}
+	}
+	if len(matches) > 0 {
+		sort.SliceStable(matches, func(left, right int) bool {
+			return matches[left].handle() > matches[right].handle()
+		})
+		return matches[0], nil
 	}
 	return worktree{}, fmt.Errorf("worktree %q not found (use 'work ls' to list worktrees)", argument)
 }

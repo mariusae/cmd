@@ -269,7 +269,7 @@ func TestSwitchRunsConfiguredSessionHook(t *testing.T) {
 	b := &fakeBackend{repositories: map[string]repository{root: repo}}
 	c, stdout, stderr := newTestCommand(t, root, home, b)
 
-	if code := c.run([]string{"switch", linked}); code != 0 {
+	if code := c.run([]string{"switch", "task"}); code != 0 {
 		t.Fatalf("run returned %d: %s", code, stderr.String())
 	}
 	contents, err := os.ReadFile(marker)
@@ -282,6 +282,48 @@ func TestSwitchRunsConfiguredSessionHook(t *testing.T) {
 	}
 	if stdout.Len() != 0 || stderr.Len() != 0 {
 		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	}
+}
+
+func TestWorktreeTargetPartialMatchChoosesMostRecent(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "fbsource")
+	older := worktree{Path: root + "-2026-09-01-aip-prototype", Label: "2026-09-01-aip-prototype"}
+	newer := worktree{Path: root + "-2026-10-06-aip-linter", Label: "2026-10-06-aip-linter"}
+	repo := repository{
+		MainRoot:    root,
+		CurrentRoot: root,
+		Worktrees: []worktree{
+			{Path: root, Main: true, Current: true},
+			older,
+			newer,
+		},
+	}
+
+	target, err := switchTarget(repo, "aip", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Path != newer.Path {
+		t.Fatalf("target = %q, want most recent %q", target.Path, newer.Path)
+	}
+}
+
+func TestWorktreeTargetExactMatchPrecedesNewerPartialMatch(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "fbsource")
+	exact := worktree{Path: root + "-2026-09-01-aip", Label: "aip"}
+	newer := worktree{Path: root + "-2026-10-06-aip-linter", Label: "2026-10-06-aip-linter"}
+	repo := repository{
+		MainRoot:    root,
+		CurrentRoot: root,
+		Worktrees:   []worktree{{Path: root, Main: true, Current: true}, newer, exact},
+	}
+
+	target, err := switchTarget(repo, "aip", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Path != exact.Path {
+		t.Fatalf("target = %q, want exact match %q", target.Path, exact.Path)
 	}
 }
 

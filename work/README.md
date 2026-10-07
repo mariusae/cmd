@@ -20,8 +20,10 @@ created if necessary. Outside a repository, bare `work` lists the configured
 default repository's linked worktrees. Explicit `work ls` always lists linked
 worktrees and omits the main worktree. `new` creates a dated sibling of the main
 worktree, checks out the current revision, and switches to its configured
-session. `work switch` accepts a worktree path or label and switches to its
-session, creating the session if the configured hook does so. `rm` without an
+session. `work switch` accepts a worktree path, label, or partial label and
+switches to its session, creating the session if the configured hook does so.
+When several labels contain the partial value, the most recent dated label is
+selected. Exact path and label matches take precedence. `rm` without an
 argument removes the current worktree, but only when run from a linked
 worktree. The main worktree is never removable.
 
