@@ -16,6 +16,29 @@ self-contained `mc` columnator, the column-oriented `lc`, and the
 path-preserving `lf` file lister. See [`9misc/README.md`](9misc/README.md) for
 behavior, dependencies, and installation.
 
+## `anti`
+
+`anti` is a scratchpad in Apex, after [Antinote](https://antinote.io/): a
+window for the notes you are going to throw away. Run it in a session and it
+shows the newest note; what is typed is kept as it is typed, each note a plain
+file in `~/.anti` (or `-dir`, or `$ANTI`). `Prev` and `Next` walk the notes,
+and past the newest is a new one; a note left empty goes, and one left alone
+for two weeks (`apex set anti.expire`) goes to the void, from which `Restore`
+brings back the last. `Export` writes a note out for keeping and opens it.
+
+The first line can make a note something more. `math` works out each line that
+ends in `=` and writes the answer after it, with `name : value` for names, `ans`
+for the last answer, and unit conversions (`10 ft to m`); the words around the
+numbers stay, so a line says what its number was for. `list` makes each line a
+checkbox, ticked by ending it in `/x` or by B3 on the box; `sum`, `avg` and
+`count` put what the note adds up to in the window's label. In any note a
+`timer` line starts a stopwatch, countdown or pomodoro, shown in the label, and
+a `paste` line adds whatever is copied afterwards. `anti -help` has the rest.
+
+Not here from Antinote: currency rates, text from screenshots, shortened
+links, and a global hotkey; a second `anti` brings the first one's window
+forward instead.
+
 ## `drafts`
 
 `drafts` keeps a directory of documents being written: a flat directory of
