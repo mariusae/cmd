@@ -101,7 +101,18 @@ The page to write:
 	b.WriteString(`
 Read the relevant source thoroughly before writing — start from the files above and follow the code wherever it leads. Everything on the page must be true of the code as it is; never guess at what a name means or does. Write for an engineer who is new to the code base and wants to understand it well enough to work on it.
 
-Write the page in GitHub-flavored Markdown:
+`)
+	b.WriteString(pageFormat)
+	b.WriteString(`- Prefer clear, direct prose to lists of fragments. Aim for a thorough page: typically 800 to 2500 words, more for a central subject.
+
+Answer with JSON: "markdown", the whole page; and "sources", every file you relied on, relative to the current directory.
+`)
+	writePrevious(&b, previous, changed, "the code may have changed since", "true of the code as it is now")
+	return b.String()
+}
+
+// pageFormat is how every page is written, code base's or change's.
+const pageFormat = `Write the page in GitHub-flavored Markdown:
 
 - Begin with "# " and the title. Then a short paragraph or two saying what the subject is for and where it fits, linking to related pages. Do not add a list of relevant source files; one is added for you.
 - Organize the rest under "## " and "### " headings: architecture and responsibilities, key types and functions, how data and control flow, important algorithms, configuration, error handling, edge cases — whatever fits the subject.
@@ -112,25 +123,26 @@ Write the page in GitHub-flavored Markdown:
 - Cite the source. End each "## " section with a line of the form
   Sources: [path/to/file.go:12-48](path/to/file.go#L12-L48), [other.go:7](other.go#L7)
   giving the files and line ranges the section rests on, with paths relative to the current directory and line numbers you have checked. Cite specific code in the prose the same way where it helps the reader find it.
-- Prefer clear, direct prose to lists of fragments. Aim for a thorough page: typically 800 to 2500 words, more for a central subject.
+`
 
-Answer with JSON: "markdown", the whole page; and "sources", every file you relied on, relative to the current directory.
-`)
-	if previous != "" {
-		b.WriteString("\nThis page was written before, and the code may have changed since. ")
-		if len(changed) > 0 {
-			b.WriteString("Files it rests on that have changed:\n\n")
-			writeList(&b, changed, 200)
-			b.WriteString("\n")
-		}
-		fmt.Fprintf(&b, `Revise the page so it is true of the code as it is now, and fits its description above: check its claims against the source, correct what is wrong, add what is missing, and keep what is still right as it is. The page as it was:
+// writePrevious asks for a page written before to be revised rather than
+// written anew.
+func writePrevious(b *strings.Builder, previous string, changed []string, since, truth string) {
+	if previous == "" {
+		return
+	}
+	fmt.Fprintf(b, "\nThis page was written before, and %s. ", since)
+	if len(changed) > 0 {
+		b.WriteString("Files it rests on that have changed:\n\n")
+		writeList(b, changed, 200)
+		b.WriteString("\n")
+	}
+	fmt.Fprintf(b, `Revise the page so it is %s, and fits its description above: check its claims against the source, correct what is wrong, add what is missing, and keep what is still right as it is. The page as it was:
 
 <previous-page>
 %s
 </previous-page>
-`, strings.TrimSpace(previous))
-	}
-	return b.String()
+`, truth, strings.TrimSpace(previous))
 }
 
 type outlineEntry struct {

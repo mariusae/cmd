@@ -25,7 +25,9 @@ type page struct {
 	Stale       bool     `json:"stale,omitempty"` // its last writing failed
 }
 
-// state is DEST/wiki.json: the outline, and the tree it was written from.
+// state is DEST/wiki.json: the outline, and the tree it was written from. A
+// wiki of a change has the change too, and its files are only those the
+// change touches, each with a hash of its part of the patch.
 type state struct {
 	Name      string            `json:"name"`
 	Source    string            `json:"source"`
@@ -34,6 +36,7 @@ type state struct {
 	Generated time.Time         `json:"generated"`
 	Pages     []page            `json:"pages"`
 	Files     map[string]string `json:"files"`
+	Change    *change           `json:"change,omitempty"`
 }
 
 const stateFile = "wiki.json"
@@ -76,6 +79,7 @@ type builder struct {
 	harness harness
 	jobs    int
 	full    bool
+	change  *change // the change to write of, rather than the code base
 	log     io.Writer
 
 	mu   sync.Mutex
@@ -107,8 +111,10 @@ func (b *builder) build(ctx context.Context) (string, error) {
 	if old != nil && old.Source != "" && old.Source != b.source {
 		b.logf("note: %s was written from %s", b.dest, old.Source)
 	}
-	t, err := scanTree(b.source)
-	if err != nil {
+	var t *tree
+	if b.change != nil {
+		t = b.change.tree(b.source)
+	} else if t, err = scanTree(b.source); err != nil {
 		return "", err
 	}
 	if len(t.files) == 0 {
@@ -121,12 +127,23 @@ func (b *builder) build(ctx context.Context) (string, error) {
 		Revision: t.revision,
 		LinkBase: t.linkBase,
 		Files:    t.files,
+		Change:   b.change,
 	}
-	var changed []string
+	if b.change != nil {
+		next.Name = filepath.Base(b.dest)
+	}
+	var (
+		changed []string
+		retold  bool // the change's commit messages are new
+	)
 	switch {
-	case old == nil || b.full || len(old.Pages) == 0:
-		b.logf("planning %s from %d files", b.source, len(t.files))
-		pages, err := b.plan(ctx, t, nil, nil)
+	case old == nil || b.full || len(old.Pages) == 0 || (old.Change == nil) != (b.change == nil):
+		if b.change != nil {
+			b.logf("planning %s from %s", b.change.Spec, pluralize(len(t.files), "changed file"))
+		} else {
+			b.logf("planning %s from %d files", b.source, len(t.files))
+		}
+		pages, err := b.plan(ctx, t, nil, nil, false)
 		if err != nil {
 			return "", err
 		}
@@ -134,12 +151,13 @@ func (b *builder) build(ctx context.Context) (string, error) {
 		old = nil
 	default:
 		changed = changedFiles(old.Files, t.files)
-		if len(changed) == 0 {
+		retold = b.change != nil && !sameMessages(old.Change, b.change)
+		if len(changed) == 0 && !retold {
 			next.Pages = old.Pages
 			break
 		}
 		b.logf("%d files changed; revising the outline", len(changed))
-		pages, err := b.plan(ctx, t, old, changed)
+		pages, err := b.plan(ctx, t, old, changed, retold)
 		if err != nil {
 			return "", err
 		}
@@ -147,6 +165,12 @@ func (b *builder) build(ctx context.Context) (string, error) {
 	}
 
 	stale := stalePages(old, next.Pages, changed, b.dest)
+	if b.change != nil && (len(changed) > 0 || retold) {
+		// These rest on the whole of the change.
+		for slug := range pageGuides {
+			stale[slug] = true
+		}
+	}
 	if len(stale) == 0 {
 		b.logf("nothing changed")
 	}
@@ -160,7 +184,7 @@ func (b *builder) build(ctx context.Context) (string, error) {
 		}
 	}
 	next.Generated = time.Now().UTC().Truncate(time.Second)
-	if len(stale) == 0 && len(changed) == 0 {
+	if len(stale) == 0 && len(changed) == 0 && !retold {
 		next.Generated = old.Generated
 	}
 	if err := next.save(b.dest); err != nil {
@@ -281,7 +305,11 @@ func (b *builder) writePage(ctx context.Context, t *tree, name, outline string, 
 		Markdown string   `json:"markdown"`
 		Sources  []string `json:"sources"`
 	}
-	cost, err := b.harness.ask(ctx, b.source, pagePrompt(name, outline, p, previous, relevant), pageSchema, &answer)
+	prompt := pagePrompt(name, outline, p, previous, relevant)
+	if b.change != nil {
+		prompt = diffPagePrompt(b.change, outline, p, previous, relevant)
+	}
+	cost, err := b.harness.ask(ctx, b.source, prompt, pageSchema, &answer)
 	b.addCost(cost)
 	if err != nil {
 		return nil, err
@@ -303,18 +331,25 @@ func (b *builder) writePage(ctx context.Context, t *tree, name, outline string, 
 }
 
 // plan has the agent outline the wiki, or revise the outline of old in light
-// of the changed files.
-func (b *builder) plan(ctx context.Context, t *tree, old *state, changed []string) ([]page, error) {
+// of the changed files, and of the change's new commit messages when retold.
+func (b *builder) plan(ctx context.Context, t *tree, old *state, changed []string, retold bool) ([]page, error) {
 	var answer struct {
 		Pages []page `json:"pages"`
 	}
 	start := time.Now()
-	cost, err := b.harness.ask(ctx, b.source, planPrompt(t, old, changed), planSchema, &answer)
+	prompt := planPrompt(t, old, changed)
+	if b.change != nil {
+		prompt = diffPlanPrompt(b.change, old, changed, retold)
+	}
+	cost, err := b.harness.ask(ctx, b.source, prompt, planSchema, &answer)
 	b.addCost(cost)
 	if err != nil {
 		return nil, fmt.Errorf("planning: %w", err)
 	}
 	pages := tidyOutline(answer.Pages, t)
+	if b.change != nil {
+		pages = pinPages(pages, []page{overviewPage, walkthroughPage}, t.sortedPaths())
+	}
 	if len(pages) == 0 {
 		return nil, errors.New("planning: the outline came back empty")
 	}
@@ -384,6 +419,39 @@ func tidyOutline(planned []page, t *tree) []page {
 		}
 	}
 	return ordered
+}
+
+// pinPages puts the given pages first in an outline, with their children
+// after them, as top-level pages; any the outline lacks are added as given,
+// resting on files.
+func pinPages(pages, pinned []page, files []string) []page {
+	isPinned := map[string]bool{}
+	for _, p := range pinned {
+		isPinned[p.Slug] = true
+	}
+	var out []page
+	for _, want := range pinned {
+		p := want
+		p.Files = files
+		for _, q := range pages {
+			if q.Slug == want.Slug {
+				p = q
+				p.Parent = ""
+			}
+		}
+		out = append(out, p)
+		for _, q := range pages {
+			if q.Parent == want.Slug && !isPinned[q.Slug] {
+				out = append(out, q)
+			}
+		}
+	}
+	for _, p := range pages {
+		if !isPinned[p.Slug] && !isPinned[p.Parent] {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 var citation = regexp.MustCompile(`\]\(([^)\s#]+)(?:#L\d+(?:-L?\d+)?)?\)`)

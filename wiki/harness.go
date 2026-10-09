@@ -21,10 +21,12 @@ type harness interface {
 	ask(ctx context.Context, dir, prompt string, schema json.RawMessage, out any) (float64, error)
 }
 
-func newHarness(name, model string) (harness, error) {
+// newHarness makes the harness of the given name. commands are commands the
+// agent may run besides, as "git show", which must be read-only.
+func newHarness(name, model string, commands []string) (harness, error) {
 	switch name {
 	case "claude":
-		return claudeHarness{model: model}, nil
+		return claudeHarness{model: model, commands: commands}, nil
 	case "codex":
 		return codexHarness{model: model}, nil
 	}
@@ -32,7 +34,8 @@ func newHarness(name, model string) (harness, error) {
 }
 
 type claudeHarness struct {
-	model string
+	model    string
+	commands []string
 }
 
 // claudeTools are all the agent is given: enough to find and read source, and
@@ -40,12 +43,21 @@ type claudeHarness struct {
 const claudeTools = "Read,Glob,Grep"
 
 func (h claudeHarness) args(schema json.RawMessage) []string {
+	tools, allowed := claudeTools, claudeTools
+	if len(h.commands) > 0 {
+		// Bash is given, but only these commands are allowed to run; in print
+		// mode any other is refused.
+		tools += ",Bash"
+		for _, c := range h.commands {
+			allowed += ",Bash(" + c + ":*)"
+		}
+	}
 	args := []string{
 		"-p",
 		"--output-format", "json",
 		"--json-schema", string(schema),
-		"--tools", claudeTools,
-		"--allowedTools", claudeTools,
+		"--tools", tools,
+		"--allowedTools", allowed,
 		"--no-session-persistence",
 		// The user's hooks are for their own sessions, not these.
 		"--settings", `{"disableAllHooks":true}`,
@@ -98,6 +110,8 @@ func decodeClaude(stdout []byte, stderr string, runErr error, out any) (float64,
 	return result.Cost, nil
 }
 
+// codexHarness runs Codex in its read-only sandbox, where it may run any
+// command that only reads.
 type codexHarness struct {
 	model string
 }

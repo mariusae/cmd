@@ -20,6 +20,7 @@ type tree struct {
 	files    map[string]string // slash-separated path → content hash
 	revision string            // the checked-out commit, when under version control
 	linkBase string            // the URL of the files on GitHub, if they are there
+	root     string            // where to look for files not listed, if anywhere
 }
 
 // scanTree lists and hashes the files of dir. Under git or Sapling the files
@@ -127,7 +128,16 @@ func (t *tree) sortedPaths() []string {
 
 // has reports whether p names a file of the tree or a directory holding one.
 func (t *tree) has(p string) bool {
-	return hasPath(t.files, p)
+	return hasPath(t.files, p) || onDisk(t.root, p)
+}
+
+// onDisk reports whether p names a file or directory under root.
+func onDisk(root, p string) bool {
+	if root == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(root, filepath.FromSlash(p)))
+	return err == nil
 }
 
 func hasPath(files map[string]string, p string) bool {
@@ -169,6 +179,9 @@ func githubBase(remote string) string {
 func output(dir, name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
+	if name == "sl" {
+		cmd.Env = append(os.Environ(), "HGPLAIN=1")
+	}
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	err := cmd.Run()

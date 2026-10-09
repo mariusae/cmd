@@ -75,6 +75,11 @@ func render(dest string, s *state) (string, error) {
 	}
 	nav := navigation(s.Pages)
 	l := &linker{pages: map[string]bool{}, files: s.Files, base: s.LinkBase}
+	if s.Change != nil {
+		// The wiki of a change knows only the files it changes, and cites
+		// others besides.
+		l.root = s.Source
+	}
 	if l.base == "" {
 		// Files not on GitHub are linked where they are, relative to the
 		// HTML so that the links need no file: URLs, which are refused.
@@ -237,6 +242,7 @@ func plainText(n ast.Node, source []byte) string {
 type linker struct {
 	pages map[string]bool
 	files map[string]string
+	root  string // where to look for files not listed, if anywhere
 	base  string
 }
 
@@ -269,7 +275,7 @@ func (l *linker) resolve(dest string) string {
 	if slug, ok := strings.CutSuffix(strings.TrimPrefix(path, "./"), ".md"); ok && l.pages[slug] {
 		return slug + ".html" + frag
 	}
-	if p := cleanPath(path); p != "" && hasPath(l.files, p) {
+	if p := cleanPath(path); p != "" && (hasPath(l.files, p) || onDisk(l.root, p)) {
 		return l.base + p + frag
 	}
 	return dest

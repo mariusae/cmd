@@ -211,6 +211,16 @@ rendered, and when something has, the agent revises the outline and rewrites
 just the pages that rest on what changed, each from its last version. `-full`
 starts over, and `-render` renders pages edited by hand.
 
+`wiki -c COMMIT` and `wiki -r REVSET` write a wiki of a change instead: a
+commit, or a linear stack of them, named as git or Sapling names it (`D123`,
+`.^::.`, `HEAD^!`; in git, a lone `-r R` means `R..HEAD`). It opens with an
+overview of the change and a walkthrough for its reviewers — foundations and
+new abstractions first, then behavior, integration, edge cases and tests, with
+the decisive code inline — and goes on to the background a reviewer needs. The
+agent may also run the VCS's read-only commands, to read a change that is not
+checked out. The wiki goes in `~/wiki/NAME@SPEC`; run again on the same
+revision after the change is revised, and it is updated like any other.
+
 ```sh
 cd wiki
 go build
@@ -219,6 +229,8 @@ go build
 ./wiki ~/src/apex ~/mycustomwikipath
 ./wiki -harness codex -j 8 .
 ./wiki -render ~/wiki/apex
+./wiki -c D12345678
+./wiki -r HEAD~2
 ```
 
 Run `wiki -help` for complete usage.

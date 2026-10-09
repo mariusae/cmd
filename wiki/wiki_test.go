@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -31,23 +32,26 @@ func (f *fakeHarness) ask(ctx context.Context, dir, prompt string, schema json.R
 		data, _ := json.Marshal(map[string]any{"pages": f.outline})
 		return 0.5, json.Unmarshal(data, out)
 	}
-	for _, p := range f.outline {
-		if !strings.Contains(prompt, "  slug: "+p.Slug+"\n") {
-			continue
-		}
-		if f.pages == nil {
-			f.pages = map[string]string{}
-		}
-		f.pages[p.Slug] = prompt
-		if f.fail[p.Slug] {
-			return 0, errors.New("no")
-		}
-		md := "# " + p.Title + "\n\nAbout [the code](a.go#L1-L2).\n\n## Part\n\nText.\n\nSources: [b.go:3](b.go#L3)\n"
-		data, _ := json.Marshal(map[string]any{"markdown": md, "sources": []string{"a.go", "missing.go"}})
-		return 0.25, json.Unmarshal(data, out)
+	slug, title := promptField.FindStringSubmatch(prompt), promptTitle.FindStringSubmatch(prompt)
+	if slug == nil || title == nil {
+		return 0, errors.New("unexpected prompt")
 	}
-	return 0, errors.New("unexpected prompt")
+	if f.pages == nil {
+		f.pages = map[string]string{}
+	}
+	f.pages[slug[1]] = prompt
+	if f.fail[slug[1]] {
+		return 0, errors.New("no")
+	}
+	md := "# " + title[1] + "\n\nAbout [the code](a.go#L1-L2).\n\n## Part\n\nText.\n\nSources: [b.go:3](b.go#L3)\n"
+	data, _ := json.Marshal(map[string]any{"markdown": md, "sources": []string{"a.go", "missing.go"}})
+	return 0.25, json.Unmarshal(data, out)
 }
+
+var (
+	promptField = regexp.MustCompile(`(?m)^  slug: (.+)$`)
+	promptTitle = regexp.MustCompile(`(?m)^  title: (.+)$`)
+)
 
 func (f *fakeHarness) reset() {
 	f.plans = nil
