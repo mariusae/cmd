@@ -14,35 +14,68 @@ import (
 
 // A harness runs a coding agent over a directory, read-only, and returns its
 // answer as JSON conforming to schema. Going through the agents' own command
-// lines leaves their authentication, models and billing to them.
+// lines leaves their authentication and billing to them.
 type harness interface {
 	// ask runs prompt in dir and decodes the answer into out. It returns what
 	// the run cost in dollars, when the agent says.
-	ask(ctx context.Context, dir, prompt string, schema json.RawMessage, out any) (float64, error)
+	ask(ctx context.Context, dir, prompt string, schema json.RawMessage, t tier, out any) (float64, error)
 }
 
-// newHarness makes the harness of the given name. commands are commands the
-// agent may run besides, as "git show", which must be read-only.
-func newHarness(name, model string, commands []string) (harness, error) {
+// A tier is how much a question to the agent matters, which decides the model
+// and effort it gets: major for planning and the pages a reader starts from,
+// minor for the rest.
+type tier int
+
+const (
+	major tier = iota
+	minor
+)
+
+// A harness's options: the model, which overrides its choice of one; whether
+// to draft, trading quality for speed; and commands the agent may run besides
+// reading, as "git show", which must be read-only.
+type options struct {
+	model    string
+	draft    bool
+	commands []string
+}
+
+func newHarness(name string, o options) (harness, error) {
 	switch name {
 	case "claude":
-		return claudeHarness{model: model, commands: commands}, nil
+		return claudeHarness{o}, nil
 	case "codex":
-		return codexHarness{model: model}, nil
+		return codexHarness{o}, nil
 	}
 	return nil, fmt.Errorf("unknown harness %q: use claude or codex", name)
 }
 
 type claudeHarness struct {
-	model    string
-	commands []string
+	options
+}
+
+// choose picks the model and effort for a question: Sonnet at its default
+// effort, or when drafting, Sonnet at low effort for major questions and
+// Haiku, which takes no effort level, for minor ones.
+func (h claudeHarness) choose(t tier) (model, effort string) {
+	model = "sonnet"
+	if h.draft && t == minor {
+		model = "haiku"
+	}
+	if h.model != "" {
+		model = h.model
+	}
+	if h.draft && !strings.Contains(model, "haiku") {
+		effort = "low"
+	}
+	return model, effort
 }
 
 // claudeTools are all the agent is given: enough to find and read source, and
 // nothing that writes or runs anything.
 const claudeTools = "Read,Glob,Grep"
 
-func (h claudeHarness) args(schema json.RawMessage) []string {
+func (h claudeHarness) args(schema json.RawMessage, t tier) []string {
 	tools, allowed := claudeTools, claudeTools
 	if len(h.commands) > 0 {
 		// Bash is given, but only these commands are allowed to run; in print
@@ -62,14 +95,16 @@ func (h claudeHarness) args(schema json.RawMessage) []string {
 		// The user's hooks are for their own sessions, not these.
 		"--settings", `{"disableAllHooks":true}`,
 	}
-	if h.model != "" {
-		args = append(args, "--model", h.model)
+	model, effort := h.choose(t)
+	args = append(args, "--model", model)
+	if effort != "" {
+		args = append(args, "--effort", effort)
 	}
 	return args
 }
 
-func (h claudeHarness) ask(ctx context.Context, dir, prompt string, schema json.RawMessage, out any) (float64, error) {
-	cmd := exec.CommandContext(ctx, "claude", h.args(schema)...)
+func (h claudeHarness) ask(ctx context.Context, dir, prompt string, schema json.RawMessage, t tier, out any) (float64, error) {
+	cmd := exec.CommandContext(ctx, "claude", h.args(schema, t)...)
 	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader(prompt)
 	var stdout, stderr bytes.Buffer
@@ -111,12 +146,13 @@ func decodeClaude(stdout []byte, stderr string, runErr error, out any) (float64,
 }
 
 // codexHarness runs Codex in its read-only sandbox, where it may run any
-// command that only reads.
+// command that only reads. It uses Codex's default model, and when drafting
+// asks it for low reasoning effort.
 type codexHarness struct {
-	model string
+	options
 }
 
-func (h codexHarness) ask(ctx context.Context, dir, prompt string, schema json.RawMessage, out any) (float64, error) {
+func (h codexHarness) ask(ctx context.Context, dir, prompt string, schema json.RawMessage, t tier, out any) (float64, error) {
 	tmp, err := os.MkdirTemp("", "wiki-codex-")
 	if err != nil {
 		return 0, err
@@ -138,6 +174,9 @@ func (h codexHarness) ask(ctx context.Context, dir, prompt string, schema json.R
 	}
 	if h.model != "" {
 		args = append(args, "--model", h.model)
+	}
+	if h.draft {
+		args = append(args, "-c", `model_reasoning_effort="low"`)
 	}
 	args = append(args, "-")
 	cmd := exec.CommandContext(ctx, "codex", args...)

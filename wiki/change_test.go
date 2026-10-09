@@ -215,17 +215,19 @@ func TestBuildChange(t *testing.T) {
 		Commits: []commit{{Hash: "h1", Parent: "b0", Message: "Make a better."}},
 		parts:   splitPatch(testPatch)[:2],
 	}
-	f := &fakeHarness{outline: []page{
-		{Slug: "walkthrough", Title: "The Walk", Parent: "background", Description: "Walk.", Files: []string{"a.go"}},
-		{Slug: "background", Title: "Background", Description: "How c works.", Files: []string{"c.go"}},
-		{Slug: "deletion", Title: "Deletion", Description: "Of gone.go.", Files: []string{"gone.go"}},
-	}}
-	b := &builder{source: source, dest: dest, harness: f, jobs: 2, change: c, log: io.Discard}
+	f := &fakeHarness{}
+	b := &builder{source: source, dest: dest, harness: f, change: c, log: io.Discard}
 	if _, err := b.build(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.plans) != 1 || !strings.Contains(f.plans[0], "Make a better.") || !strings.Contains(f.plans[0], "+++ /dev/null") {
-		t.Errorf("plan prompt lacks the change:\n%s", f.plans)
+	if len(f.plans) != 0 {
+		t.Errorf("a change was planned")
+	}
+	if want := []string{"background", "overview", "walkthrough"}; !reflect.DeepEqual(f.written(), want) {
+		t.Fatalf("wrote %v, want %v", f.written(), want)
+	}
+	if f.tiers["overview"] != major || f.tiers["walkthrough"] != major || f.tiers["background"] != minor {
+		t.Errorf("tiers = %v", f.tiers)
 	}
 	s, err := loadState(dest)
 	if err != nil {
@@ -233,9 +235,9 @@ func TestBuildChange(t *testing.T) {
 	}
 	var slugs []string
 	for _, p := range s.Pages {
-		slugs = append(slugs, p.Slug+"<"+p.Parent)
+		slugs = append(slugs, p.Slug)
 	}
-	if want := []string{"overview<", "walkthrough<", "background<", "deletion<"}; !reflect.DeepEqual(slugs, want) {
+	if want := []string{"overview", "walkthrough", "background"}; !reflect.DeepEqual(slugs, want) {
 		t.Errorf("outline = %v, want %v", slugs, want)
 	}
 	if s.Name != "proj@D1" || s.Change == nil || s.Change.Head != "h1" || s.Revision != "h1" {
@@ -244,18 +246,19 @@ func TestBuildChange(t *testing.T) {
 	if !reflect.DeepEqual(s.page("overview").Files, []string{"a.go", "b.go", "gone.go"}) {
 		t.Errorf("overview files = %v", s.page("overview").Files)
 	}
-	if p := f.pages["walkthrough"]; !strings.Contains(p, "Foundations") || !strings.Contains(p, "--- a/gone.go") {
-		t.Errorf("walkthrough prompt lacks its guide or the whole patch:\n%s", p)
+	for slug, guide := range map[string]string{"walkthrough": "Foundations", "background": "as it was before the change", "overview": "what a reviewer should know"} {
+		p := f.pages[slug]
+		if !strings.Contains(p, guide) || !strings.Contains(p, "Make a better.") || !strings.Contains(p, "--- a/gone.go") || !strings.Contains(p, "checked out at the change") {
+			t.Errorf("%s prompt lacks its guide or the change:\n%s", slug, p)
+		}
 	}
-	if p := f.pages["background"]; strings.Contains(p, "<patch>") || !strings.Contains(p, "checked out at the change") {
-		t.Errorf("background prompt:\n%s", p)
-	}
-	if p := f.pages["deletion"]; !strings.Contains(p, "+++ /dev/null") || strings.Contains(p, "+++ b/a.go") {
-		t.Errorf("deletion prompt should quote only gone.go:\n%s", p)
+	// What the prompts share comes first.
+	if i := strings.Index(f.pages["walkthrough"], "  slug: "); i < strings.Index(f.pages["walkthrough"], "<patch>") {
+		t.Error("the page comes before the patch")
 	}
 	// Unchanged files the pages cite are linked, though the change does not
 	// touch them.
-	if html, _ := os.ReadFile(filepath.Join(dest, "html", "background.html")); !strings.Contains(string(html), `href="`) || !strings.Contains(string(html), `b.go#L3`) {
+	if html, _ := os.ReadFile(filepath.Join(dest, "html", "background.html")); !strings.Contains(string(html), `b.go#L3`) {
 		t.Errorf("background.html does not link b.go")
 	}
 
@@ -268,8 +271,8 @@ func TestBuildChange(t *testing.T) {
 		t.Errorf("unchanged change: plans %d, pages %v", len(f.plans), f.written())
 	}
 
-	// The change is revised in gone.go: the fixed pages and the one on
-	// gone.go are written again, from their last versions.
+	// The change is revised: every page is written again, from its last
+	// version.
 	f.reset()
 	revised := *c
 	revised.Head = "h2"
@@ -278,17 +281,14 @@ func TestBuildChange(t *testing.T) {
 	if _, err := b.build(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.plans) != 1 || !strings.Contains(f.plans[0], "earlier version of the change") {
-		t.Errorf("revision plan: %v", f.plans)
+	if want := []string{"background", "overview", "walkthrough"}; len(f.plans) != 0 || !reflect.DeepEqual(f.written(), want) {
+		t.Errorf("plans %d, rewrote %v, want %v", len(f.plans), f.written(), want)
 	}
-	if want := []string{"deletion", "overview", "walkthrough"}; !reflect.DeepEqual(f.written(), want) {
-		t.Errorf("rewrote %v, want %v", f.written(), want)
-	}
-	if p := f.pages["walkthrough"]; !strings.Contains(p, "<previous-page>") || !strings.Contains(p, "may have been revised") {
-		t.Errorf("walkthrough prompt lacks its previous version")
+	if p := f.pages["walkthrough"]; !strings.Contains(p, "<previous-page>") || !strings.Contains(p, "may have been revised") || !strings.Contains(p, "gone.go\n\nRevise") {
+		t.Errorf("walkthrough prompt lacks its previous version:\n%s", p)
 	}
 
-	// Only the message changes: the fixed pages are written again.
+	// Only the message changes: the pages are written again.
 	f.reset()
 	retold := revised
 	retold.Commits = []commit{{Hash: "h2", Parent: "b0", Message: "Make a much better."}}
@@ -296,21 +296,81 @@ func TestBuildChange(t *testing.T) {
 	if _, err := b.build(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.plans) != 1 || !strings.Contains(f.plans[0], "commit messages have changed") {
-		t.Errorf("retold plan: %v", f.plans)
-	}
-	if want := []string{"overview", "walkthrough"}; !reflect.DeepEqual(f.written(), want) {
+	if want := []string{"background", "overview", "walkthrough"}; !reflect.DeepEqual(f.written(), want) {
 		t.Errorf("rewrote %v, want %v", f.written(), want)
 	}
 }
 
+func TestDraft(t *testing.T) {
+	source := t.TempDir()
+	dest := filepath.Join(t.TempDir(), "proj@D1")
+	writeTree(t, source, map[string]string{"a.go": "package a\n"})
+	c := &change{VCS: "git", Spec: "D1", Head: "h1", parts: splitPatch(testPatch)[:1]}
+	f := &fakeHarness{}
+	b := &builder{source: source, dest: dest, harness: f, change: c, draft: true, log: io.Discard}
+	if _, err := b.build(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if p := f.pages["walkthrough"]; !strings.Contains(p, "This page is a draft") || !strings.Contains(p, "NOT checked out") {
+		t.Errorf("draft prompt:\n%s", p)
+	}
+	if s, _ := loadState(dest); !s.page("overview").Draft {
+		t.Error("draft not marked")
+	}
+
+	// Drafting again leaves the drafts be; writing in full replaces them.
+	f.reset()
+	if _, err := b.build(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.pages) != 0 {
+		t.Errorf("redrafted %v", f.written())
+	}
+	b.draft = false
+	if _, err := b.build(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.pages) != 3 || strings.Contains(f.pages["overview"], "This page is a draft") {
+		t.Errorf("full run wrote %v", f.written())
+	}
+	if s, _ := loadState(dest); s.page("overview").Draft {
+		t.Error("full page marked a draft")
+	}
+
+	// A draft run leaves full pages be.
+	f.reset()
+	b.draft = true
+	if _, err := b.build(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.pages) != 0 {
+		t.Errorf("drafted over full pages: %v", f.written())
+	}
+}
+
 func TestClaudeArgs(t *testing.T) {
-	args := strings.Join(claudeHarness{commands: []string{"git show"}}.args(planSchema), " ")
+	args := strings.Join(claudeHarness{options{commands: []string{"git show"}}}.args(planSchema, major), " ")
 	if !strings.Contains(args, "--tools Read,Glob,Grep,Bash ") || !strings.Contains(args, "--allowedTools Read,Glob,Grep,Bash(git show:*) ") {
 		t.Errorf("args = %s", args)
 	}
-	args = strings.Join(claudeHarness{}.args(planSchema), " ")
+	args = strings.Join(claudeHarness{}.args(planSchema, major), " ")
 	if strings.Contains(args, "Bash") {
 		t.Errorf("args = %s", args)
+	}
+	for _, tc := range []struct {
+		o             options
+		t             tier
+		model, effort string
+	}{
+		{options{}, major, "sonnet", ""},
+		{options{}, minor, "sonnet", ""},
+		{options{draft: true}, major, "sonnet", "low"},
+		{options{draft: true}, minor, "haiku", ""},
+		{options{model: "opus"}, minor, "opus", ""},
+		{options{model: "opus", draft: true}, minor, "opus", "low"},
+	} {
+		if model, effort := (claudeHarness{tc.o}).choose(tc.t); model != tc.model || effort != tc.effort {
+			t.Errorf("choose(%+v, %v) = %s %s, want %s %s", tc.o, tc.t, model, effort, tc.model, tc.effort)
+		}
 	}
 }

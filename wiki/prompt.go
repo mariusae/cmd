@@ -46,7 +46,7 @@ var pageSchema = json.RawMessage(`{
 // is left to look for itself.
 const maxListed = 3000
 
-func planPrompt(t *tree, old *state, changed []string) string {
+func planPrompt(t *tree, old *state, changed []string, draft bool) string {
 	var b strings.Builder
 	b.WriteString(`You are planning a wiki for the code base in the current directory, in the style of DeepWiki (deepwiki.com): a set of pages that together explain to an engineer new to the project what it is, how it is put together, and how its parts work.
 
@@ -64,6 +64,9 @@ Then outline the wiki. Guidelines:
 - files: the 3 to 15 source files (paths relative to the current directory) most relevant to the page, which its writer should read first. Directories are allowed when a whole directory is the subject.
 
 `)
+	if draft {
+		b.WriteString("This wiki is a draft, wanted quickly: plan about half as many pages as you otherwise would, each covering more, and explore only as much as you need to outline it soundly.\n\n")
+	}
 	if old != nil {
 		fmt.Fprintf(&b, `This wiki has been written before, and the code base has changed since. Revise the existing outline rather than starting over: keep the slugs, titles and descriptions of pages that are still right exactly as they are, so they are not rewritten for nothing; change a page's title or description only when what it covers has changed; add pages for new subsystems and drop pages for removed ones. Update the files lists to match the code as it now is.
 
@@ -83,32 +86,44 @@ The files added, removed or changed since it was written:
 	return b.String()
 }
 
-func pagePrompt(name, outline string, p *page, previous string, changed []string) string {
+func pagePrompt(name, outline string, p *page, previous string, changed []string, draft bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `You are writing one page of a wiki for the code base in the current directory (%s), in the style of DeepWiki (deepwiki.com). The wiki's outline, as JSON:
 
 %s
 
-The page to write:
+Read the relevant source thoroughly before writing — start from the files the page names and follow the code wherever it leads. Everything on the page must be true of the code as it is; never guess at what a name means or does. Write for an engineer who is new to the code base and wants to understand it well enough to work on it.
 
-  slug: %s
-  title: %s
-  covers: %s
-`, name, outline, p.Slug, p.Title, p.Description)
-	if len(p.Files) > 0 {
-		fmt.Fprintf(&b, "  start from: %s\n", strings.Join(p.Files, ", "))
-	}
-	b.WriteString(`
-Read the relevant source thoroughly before writing — start from the files above and follow the code wherever it leads. Everything on the page must be true of the code as it is; never guess at what a name means or does. Write for an engineer who is new to the code base and wants to understand it well enough to work on it.
-
-`)
+`, name, outline)
 	b.WriteString(pageFormat)
-	b.WriteString(`- Prefer clear, direct prose to lists of fragments. Aim for a thorough page: typically 800 to 2500 words, more for a central subject.
-
-Answer with JSON: "markdown", the whole page; and "sources", every file you relied on, relative to the current directory.
-`)
+	b.WriteString("- Prefer clear, direct prose to lists of fragments. ")
+	if draft {
+		b.WriteString(draftLength)
+	} else {
+		b.WriteString("Aim for a thorough page: typically 800 to 2500 words, more for a central subject.\n")
+	}
+	b.WriteString(answerFormat)
+	writePage(&b, p)
 	writePrevious(&b, previous, changed, "the code may have changed since", "true of the code as it is now")
 	return b.String()
+}
+
+// The prompts for pages put what they all share first and the page last, so
+// that the agent can cache what they share.
+
+const answerFormat = `
+Answer with JSON: "markdown", the whole page; and "sources", every file you relied on, relative to the current directory.
+`
+
+// draftLength is how long a draft page is, whatever is said elsewhere.
+const draftLength = `This page is a draft, wanted quickly, and this overrides what is said elsewhere of its length: make it short and summary, about a third as long as a full page — typically 300 to 800 words, more only for a large subject. Keep its structure, but summarize rather than detail: give the gist and the few specifics that matter most, quote only the most decisive code, and draw at most one diagram. Read only as much as you need to be right.
+`
+
+func writePage(b *strings.Builder, p *page) {
+	fmt.Fprintf(b, "\nThe page to write:\n\n  slug: %s\n  title: %s\n  covers: %s\n", p.Slug, p.Title, p.Description)
+	if len(p.Files) > 0 {
+		fmt.Fprintf(b, "  start from: %s\n", strings.Join(p.Files, ", "))
+	}
 }
 
 // pageFormat is how every page is written, code base's or change's.

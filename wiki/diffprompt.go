@@ -5,26 +5,37 @@ import (
 	"strings"
 )
 
-// The prompts for the wiki of a change. Its first two pages are fixed: an
-// overview of the change, and a walkthrough of it for its reviewers; the rest
-// are the agent's choice.
+// The prompts for the wiki of a change. Its pages are always the same three,
+// written at once from the change without a plan: an overview of the change,
+// a walkthrough of it for its reviewers, and the background they need.
 
-var (
-	overviewPage = page{
-		Slug:        "overview",
-		Title:       "Overview",
-		Description: "What the change does and why, its approach and scope, and what a reviewer should know first.",
+// changePages are the pages of a change's wiki, resting on files.
+func changePages(files []string) []page {
+	return []page{
+		{
+			Slug:        "overview",
+			Title:       "Overview",
+			Description: "What the change does and why, its approach and scope, and what a reviewer should know first.",
+			Files:       files,
+		},
+		{
+			Slug:        "walkthrough",
+			Title:       "Walkthrough",
+			Description: "A walk through the whole change for its reviewers, from foundations and new abstractions, through behavior and integration, to edge cases and tests.",
+			Files:       files,
+		},
+		{
+			Slug:        "background",
+			Title:       "Background",
+			Description: "The code the change works in, as it was before the change: what a reviewer new to it needs to know to judge the change.",
+			Files:       files,
+		},
 	}
-	walkthroughPage = page{
-		Slug:        "walkthrough",
-		Title:       "Walkthrough",
-		Description: "A walk through the whole change for its reviewers, in reading order.",
-	}
-)
+}
 
 // pageGuides are the instructions for writing the fixed pages.
 var pageGuides = map[string]string{
-	"overview": `This page is the overview of the change, the first a reader sees. Say what the change does and why — the problem it solves or the feature it adds, as the commit messages tell it and as the code bears out — and how: the approach, and the main pieces that make it up. Give the background a reader needs to follow it, briefly, linking to the pages that explain more. Summarize the scope in a table of the areas or files changed and what changed in each. Then say what a reviewer should know before starting: behavior that changes for users or callers, compatibility, migrations, risks, and anything the change leaves undone. End by pointing to the [Walkthrough](walkthrough.md). Typically 500 to 1500 words.
+	"overview": `This page is the overview of the change, the first a reader sees. Say what the change does and why — the problem it solves or the feature it adds, as the commit messages tell it and as the code bears out — and how: the approach, and the main pieces that make it up. Give the background a reader needs to follow it, briefly, linking to the pages that explain more. Summarize the scope in a table of the areas or files changed and what changed in each. Then say what a reviewer should know before starting: behavior that changes for users or callers, compatibility, migrations, risks, and anything the change leaves undone. End by pointing to the [Walkthrough](walkthrough.md), and to the [Background](background.md) for readers new to this code. Typically 500 to 1500 words.
 `,
 	"walkthrough": `This page is the walkthrough: a reviewer reads it front to back, once, to understand the whole change well enough to review it. Write it as one linear narrative, not file by file in the patch's order, and under these headings, in this order, leaving out any with nothing under it:
 
@@ -34,7 +45,9 @@ var pageGuides = map[string]string{
 4. Edge cases — errors, boundary conditions, concurrency, compatibility, and whatever else is subtle: what the change does about each, and what it may miss.
 5. Tests — what is tested and how. Summarize routine tests in a sentence or a table; show only tests that are themselves decisive or surprising.
 
-Put the decisive changed code inline, in fenced blocks marked "diff" holding the hunks of the patch trimmed to the lines that matter, each with prose saying what it does and why. That code is the heart of the page: a reviewer should be able to judge the change from it without opening the patch. Give mechanical changes — renames, moved code, imports, formatting, generated files — a line each, not code. Say plainly what deserves a reviewer's attention: risks, assumptions, changes of behavior the commit messages do not mention, open questions. Account for every file of the change, if only in a closing list of the routine ones. Link to the other pages of the wiki where a reader needs background, rather than explaining it here. A diagram helps only where the change alters how parts interact; most walkthroughs need none. Make the page as long as the change needs.
+Put the decisive changed code inline, in fenced blocks marked "diff" holding the hunks of the patch trimmed to the lines that matter, each with prose saying what it does and why. That code is the heart of the page: a reviewer should be able to judge the change from it without opening the patch. Give mechanical changes — renames, moved code, imports, formatting, generated files — a line each, not code. Say plainly what deserves a reviewer's attention: risks, assumptions, changes of behavior the commit messages do not mention, open questions. Account for every file of the change, if only in a closing list of the routine ones. Link to the [Background](background.md) where a reader needs to know how the code worked before, rather than explaining it here. A diagram helps only where the change alters how parts interact; most walkthroughs need none. Make the page as long as the change needs.
+`,
+	"background": `This page is the background: the code the change works in, as it was before the change, for a reviewer new to it. Find the subsystems, abstractions, data structures and flows the change touches or depends on, and explain them well enough to judge the change: what each is for, how it works, and how the parts fit together, with diagrams where they help. Explain the code before the change, reading it as of the change's base; where the change comes in, say so in a sentence and link to the [Walkthrough](walkthrough.md), but do not walk through the change itself. Leave out what the change does not bear on. Typically 800 to 2500 words, fewer for a small change in simple code.
 `,
 }
 
@@ -42,89 +55,37 @@ Put the decisive changed code inline, in fenced blocks marked "diff" holding the
 // is left to read the rest itself.
 const maxPatch = 200_000
 
-func diffPlanPrompt(c *change, old *state, changed []string, retold bool) string {
-	var b strings.Builder
-	b.WriteString(`You are planning a wiki about a change to the code base in the current directory — a diff under review — in the style of DeepWiki (deepwiki.com): a set of pages that together explain to a reviewer what the change does, why, and how, with the background they need to judge it, though they may be new to this part of the code base.
-
-Study the change below, and explore the code it touches with your tools before deciding anything: read the changed files, the code that calls and is called by what changed, and the tests.
-
-Then outline the wiki. Guidelines:
-
-- The first page has the slug "overview" and the title "Overview": what the change does and why, its approach and scope, and what a reviewer should know first.
-- The second has the slug "walkthrough" and the title "Walkthrough": a walk through the whole change for its reviewers, from foundations and new abstractions, through behavior and integration, to edge cases and tests. Its writer has instructions of their own; give it a one-sentence description and every changed file.
-- Then the background a reviewer needs: a page for each existing subsystem, abstraction or flow the change works in or alters, explaining how it works, how it worked before the change, and what the change does to it; and a page for each new mechanism the change introduces that needs more room than the walkthrough can give it. Order them so that foundations come first.
-- Use one level of nesting where it helps: a page may name another top-level page as its parent; otherwise parent is "".
-- Size the wiki to the change: just the two fixed pages, or one or two more, for a small change; up to about 10 pages for a large one. Every page should have substance; do not make a page for what a paragraph of the walkthrough would cover.
-- slug: short, lowercase, hyphenated, unique.
-- title: a short, specific title.
-- description: two to four sentences saying exactly what the page covers and what it leaves to other pages; the page's writer will see only this, the outline, and the change.
-- files: the 3 to 15 files (paths relative to the current directory) most relevant to the page, changed or not, which its writer should read first.
-
-`)
-	if old != nil {
-		fmt.Fprintf(&b, `This wiki was written for an earlier version of the change, which has been revised since. Revise the existing outline rather than starting over: keep the slugs, titles and descriptions of pages that are still right exactly as they are, so they are not rewritten for nothing; change a page's title or description only when what it covers has changed; add pages for what the change now does and drop pages for what it no longer does. Update the files lists to match.
-
-The existing outline:
-
-%s
-
-`, mustJSON(outlineOf(old.Pages, true)))
-		if len(changed) > 0 {
-			b.WriteString("The files whose part of the change is new, different, or gone:\n\n")
-			writeList(&b, changed, maxListed)
-			b.WriteString("\n")
-		}
-		if retold {
-			b.WriteString("The commit messages have changed.\n\n")
-		}
-	}
-	describeChange(&b, c, nil)
-	b.WriteString("\nAnswer with the outline as JSON, the pages in reading order.\n")
-	return b.String()
-}
-
-func diffPagePrompt(c *change, outline string, p *page, previous string, changed []string) string {
+func diffPagePrompt(c *change, outline string, p *page, previous string, changed []string, draft bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `You are writing one page of a wiki about a change to the code base in the current directory — a diff under review — in the style of DeepWiki (deepwiki.com). The wiki's outline, as JSON:
 
 %s
 
-The page to write:
-
-  slug: %s
-  title: %s
-  covers: %s
-`, outline, p.Slug, p.Title, p.Description)
-	if len(p.Files) > 0 {
-		fmt.Fprintf(&b, "  start from: %s\n", strings.Join(p.Files, ", "))
-	}
-	b.WriteString("\n")
-	var only []string
-	if pageGuides[p.Slug] == "" {
-		only = p.Files
-	}
-	describeChange(&b, c, only)
+`, outline)
+	describeChange(&b, c)
 	b.WriteString(`
-Read the change and the code around it thoroughly before writing — start from the files above and follow the code wherever it leads. Everything on the page must be true of the code; never guess at what a name means or does. Write for a reviewer of the change who may be new to this part of the code base: explain the code as the change leaves it, and say what the change does to it — what was there before, and what is new or different.
+Read the change and the code around it thoroughly before writing, and follow the code wherever it leads. Everything on the page must be true of the code; never guess at what a name means or does. Write for a reviewer of the change who may be new to this part of the code base.
 
 `)
-	if guide := pageGuides[p.Slug]; guide != "" {
-		b.WriteString(guide + "\n")
-	}
 	b.WriteString(pageFormat)
 	b.WriteString(`- Quote changed code as fenced blocks marked "diff", trimmed to the lines that matter. Cite lines as they are after the change.
 - Prefer clear, direct prose to lists of fragments.
-
-Answer with JSON: "markdown", the whole page; and "sources", every file you relied on, relative to the current directory.
 `)
+	b.WriteString(answerFormat)
+	writePage(&b, p)
+	if guide := pageGuides[p.Slug]; guide != "" {
+		b.WriteString("\n" + guide)
+	}
+	if draft {
+		b.WriteString("\n" + draftLength)
+	}
 	writePrevious(&b, previous, changed, "the change may have been revised since", "true of the change as it is now")
 	return b.String()
 }
 
 // describeChange writes out a change for a prompt: its commits, its files,
-// how to read its code, and its patch — all of it, or that of the files under
-// only when only is not nil.
-func describeChange(b *strings.Builder, c *change, only []string) {
+// how to read its code, and its patch.
+func describeChange(b *strings.Builder, c *change) {
 	fmt.Fprintf(b, "The change is %s in %s, from %s to %s. ", pluralize(len(c.Commits), "commit"), vcsName(c.VCS), shortRevision(c.baseRev()), shortRevision(c.Head))
 	b.WriteString("Its commit messages:\n\n")
 	for _, cm := range c.Commits {
@@ -147,9 +108,6 @@ func describeChange(b *strings.Builder, c *change, only []string) {
 	var quoted, omitted []string
 	size := 0
 	for _, p := range c.parts {
-		if only != nil && !covers(only, p.Path) {
-			continue
-		}
 		if size+len(p.Text) > maxPatch {
 			omitted = append(omitted, p.Path)
 			continue
@@ -158,11 +116,7 @@ func describeChange(b *strings.Builder, c *change, only []string) {
 		quoted = append(quoted, p.Text)
 	}
 	if len(quoted) > 0 {
-		if only != nil {
-			b.WriteString("The patch, for the files this page rests on:\n\n")
-		} else {
-			b.WriteString("The patch:\n\n")
-		}
+		b.WriteString("The patch:\n\n")
 		fmt.Fprintf(b, "<patch>\n%s</patch>\n", strings.Join(quoted, ""))
 	}
 	if len(omitted) > 0 {

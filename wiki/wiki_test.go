@@ -22,9 +22,10 @@ type fakeHarness struct {
 	fail    map[string]bool // slugs whose pages fail
 	plans   []string
 	pages   map[string]string // slug → prompt
+	tiers   map[string]tier   // slug → the tier its page was asked at
 }
 
-func (f *fakeHarness) ask(ctx context.Context, dir, prompt string, schema json.RawMessage, out any) (float64, error) {
+func (f *fakeHarness) ask(ctx context.Context, dir, prompt string, schema json.RawMessage, t tier, out any) (float64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if string(schema) == string(planSchema) {
@@ -38,8 +39,10 @@ func (f *fakeHarness) ask(ctx context.Context, dir, prompt string, schema json.R
 	}
 	if f.pages == nil {
 		f.pages = map[string]string{}
+		f.tiers = map[string]tier{}
 	}
 	f.pages[slug[1]] = prompt
+	f.tiers[slug[1]] = t
 	if f.fail[slug[1]] {
 		return 0, errors.New("no")
 	}
@@ -56,6 +59,7 @@ var (
 func (f *fakeHarness) reset() {
 	f.plans = nil
 	f.pages = nil
+	f.tiers = nil
 }
 
 func (f *fakeHarness) written() []string {

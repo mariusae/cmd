@@ -29,7 +29,11 @@ DEST/html, and prints the path of the front page. DEST is ~/wiki/NAME, where
 NAME is SOURCE's base name; $WIKI_DIR, if set, stands in for ~/wiki.
 
 The agent runs with the tools to read SOURCE and nothing else. It is run once
-to plan the wiki's pages, then once for each page, several at a time.
+to plan the wiki's pages, then once for each page, all at once. With Claude,
+wiki picks the model: Sonnet, unless -model says otherwise. -draft writes a
+quicker, shorter wiki: fewer and shorter pages that summarize more, written
+at low effort, by Haiku but for the plan and the front pages. Run again
+without -draft, wiki writes the drafted pages in full.
 
 Run again on the same DEST, wiki updates the wiki rather than writing it anew.
 DEST/wiki.json holds the outline and a hash of every file in SOURCE. When no
@@ -42,18 +46,17 @@ With -c or -r, the wiki is of a change rather than of the code base: one
 commit, or a linear stack of them, in the git or Sapling repository holding
 SOURCE (by default the current directory), named as the VCS names them —
 D123 or .^::. for Sapling, HEAD^! or main..topic for git. Given to -r in
-git, a lone revision R stands for the commits since it, R..HEAD. The wiki
-begins with an overview of the change and a walkthrough for its reviewers —
-foundations first, then behavior, integration, edge cases and tests, with
-the decisive code inline — and goes on to the background a reviewer needs.
-The agent may also run the VCS's read-only commands (git show, sl cat and
+git, a lone revision R stands for the commits since it, R..HEAD. Such a
+wiki is not planned, but always has the same three pages, written at once:
+an overview of the change; a walkthrough for its reviewers — foundations
+first, then behavior, integration, edge cases and tests, with the decisive
+code inline; and the background a reviewer needs. The agent may also run the VCS's read-only commands (git show, sl cat and
 the like), to read the change when it is not checked out.
 
 DEST is then ~/wiki/NAME@SPEC, where NAME is the repository's base name and
 SPEC the revision as given. Run again with the same revision after the
-change is revised, wiki updates its wiki: the overview and walkthrough are
-written again, and of the other pages those resting on a file whose part of
-the patch is different.
+change is revised, wiki updates its wiki, writing each page again from its
+last version.
 
 The Markdown is the wiki: edit a page by hand, and -render shows the change.
 Links between pages are written [Title](slug.md), and citations of the source
@@ -62,23 +65,24 @@ to the file on GitHub when SOURCE is a GitHub clone, or on disk otherwise.
 
 Flags:
   -harness NAME  the agent to run: claude (the default) or codex
-  -model MODEL   the model the agent uses, instead of its default
+  -model MODEL   the model the agent uses, instead of wiki's choice
+  -draft         write quickly, at the expense of quality
   -c COMMIT      write of the change made by COMMIT
   -r REVSET      write of the change made by the commits of REVSET
-  -j N           how many pages to write at once (default 4)
+  -j N           write at most N pages at once (default: all)
   -full          plan and write every page again
   -render        render DEST's pages as HTML, and nothing else
 
 Examples:
   wiki ~/src/apex
   wiki ~/src/apex ~/mycustomwikipath
-  wiki -harness codex -j 8 .
+  wiki -harness codex -draft .
   wiki -c D12345678
   wiki -r HEAD~2
   wiki -render ~/wiki/apex
 `
 
-const usage = `usage: wiki [-harness claude|codex] [-model MODEL] [-j N] [-full] SOURCE [DEST]
+const usage = `usage: wiki [-harness claude|codex] [-model MODEL] [-draft] [-j N] [-full] SOURCE [DEST]
        wiki [flags] -c COMMIT | -r REVSET [SOURCE [DEST]]`
 
 func main() {
@@ -92,7 +96,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	flags.SetOutput(io.Discard)
 	harnessName := flags.String("harness", "claude", "")
 	model := flags.String("model", "", "")
-	jobs := flags.Int("j", 4, "")
+	jobs := flags.Int("j", 0, "")
+	draft := flags.Bool("draft", false, "")
 	full := flags.Bool("full", false, "")
 	renderOnly := flags.Bool("render", false, "")
 	commit := flags.String("c", "", "")
@@ -131,7 +136,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	if spec != "" && len(rest) == 0 {
 		rest = []string{"."}
 	}
-	if len(rest) < 1 || len(rest) > 2 || *jobs < 1 || (*commit != "" && *revset != "") {
+	if len(rest) < 1 || len(rest) > 2 || *jobs < 0 || (*commit != "" && *revset != "") {
 		fmt.Fprintln(stderr, usage)
 		return 2
 	}
@@ -177,7 +182,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	if c != nil {
 		commands = c.commands()
 	}
-	h, err := newHarness(*harnessName, *model, commands)
+	h, err := newHarness(*harnessName, options{model: *model, draft: *draft, commands: commands})
 	if err != nil {
 		fmt.Fprintf(stderr, "wiki: %v\n", err)
 		return 2
@@ -188,6 +193,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		harness: h,
 		jobs:    *jobs,
 		full:    *full,
+		draft:   *draft,
 		change:  c,
 		log:     stderr,
 	}

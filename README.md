@@ -197,7 +197,11 @@ citations of the source down to the line. A coding agent does the reading and
 the writing — Claude Code through `claude -p`, or Codex through `codex exec`
 with `-harness codex` — so authentication and models are the agent's own
 business; it is given only the tools to read the source. It is run once to plan
-the wiki and then once for each page, several at a time.
+the wiki and then once for each page, all at once. With Claude, `wiki` uses
+Sonnet unless `-model` says otherwise. `-draft` trades quality for speed:
+fewer, shorter pages that summarize more, at low effort, with Haiku writing all
+but the plan and the front pages; a later run without it writes the drafts in
+full.
 
 The wiki is Markdown, a file per page, in `~/wiki/NAME` (or `$WIKI_DIR/NAME`,
 or the destination given), and `wiki` renders it as plain HTML in `html/`
@@ -213,13 +217,14 @@ starts over, and `-render` renders pages edited by hand.
 
 `wiki -c COMMIT` and `wiki -r REVSET` write a wiki of a change instead: a
 commit, or a linear stack of them, named as git or Sapling names it (`D123`,
-`.^::.`, `HEAD^!`; in git, a lone `-r R` means `R..HEAD`). It opens with an
-overview of the change and a walkthrough for its reviewers — foundations and
-new abstractions first, then behavior, integration, edge cases and tests, with
-the decisive code inline — and goes on to the background a reviewer needs. The
-agent may also run the VCS's read-only commands, to read a change that is not
-checked out. The wiki goes in `~/wiki/NAME@SPEC`; run again on the same
-revision after the change is revised, and it is updated like any other.
+`.^::.`, `HEAD^!`; in git, a lone `-r R` means `R..HEAD`). Such a wiki is not
+planned; it always has three pages, written at once: an overview of the change,
+a walkthrough for its reviewers — foundations and new abstractions first, then
+behavior, integration, edge cases and tests, with the decisive code inline — and
+the background a reviewer needs. The agent may also run the VCS's read-only
+commands, to read a change that is not checked out. The wiki goes in
+`~/wiki/NAME@SPEC`; run again on the same revision after the change is revised,
+and it is updated like any other.
 
 ```sh
 cd wiki
@@ -227,7 +232,7 @@ go build
 
 ./wiki ~/src/apex
 ./wiki ~/src/apex ~/mycustomwikipath
-./wiki -harness codex -j 8 .
+./wiki -harness codex -draft .
 ./wiki -render ~/wiki/apex
 ./wiki -c D12345678
 ./wiki -r HEAD~2

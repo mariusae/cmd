@@ -23,6 +23,7 @@ type page struct {
 	Description string   `json:"description"`
 	Files       []string `json:"files"`           // the source the page rests on
 	Stale       bool     `json:"stale,omitempty"` // its last writing failed
+	Draft       bool     `json:"draft,omitempty"` // it was written as a draft
 }
 
 // state is DEST/wiki.json: the outline, and the tree it was written from. A
@@ -77,8 +78,9 @@ type builder struct {
 	source  string
 	dest    string
 	harness harness
-	jobs    int
+	jobs    int // how many pages to write at once; 0 for all of them
 	full    bool
+	draft   bool
 	change  *change // the change to write of, rather than the code base
 	log     io.Writer
 
@@ -136,14 +138,20 @@ func (b *builder) build(ctx context.Context) (string, error) {
 		changed []string
 		retold  bool // the change's commit messages are new
 	)
+	if old != nil && (b.full || (old.Change == nil) != (b.change == nil)) {
+		old = nil
+	}
 	switch {
-	case old == nil || b.full || len(old.Pages) == 0 || (old.Change == nil) != (b.change == nil):
-		if b.change != nil {
-			b.logf("planning %s from %s", b.change.Spec, pluralize(len(t.files), "changed file"))
-		} else {
-			b.logf("planning %s from %d files", b.source, len(t.files))
+	case b.change != nil:
+		// The pages of a change's wiki are always the same, and need no plan.
+		next.Pages = changePages(t.sortedPaths())
+		if old != nil {
+			changed = changedFiles(old.Files, t.files)
+			retold = !sameMessages(old.Change, b.change)
 		}
-		pages, err := b.plan(ctx, t, nil, nil, false)
+	case old == nil || len(old.Pages) == 0:
+		b.logf("planning %s from %d files", b.source, len(t.files))
+		pages, err := b.plan(ctx, t, nil, nil)
 		if err != nil {
 			return "", err
 		}
@@ -151,24 +159,23 @@ func (b *builder) build(ctx context.Context) (string, error) {
 		old = nil
 	default:
 		changed = changedFiles(old.Files, t.files)
-		retold = b.change != nil && !sameMessages(old.Change, b.change)
-		if len(changed) == 0 && !retold {
+		if len(changed) == 0 {
 			next.Pages = old.Pages
 			break
 		}
 		b.logf("%d files changed; revising the outline", len(changed))
-		pages, err := b.plan(ctx, t, old, changed, retold)
+		pages, err := b.plan(ctx, t, old, changed)
 		if err != nil {
 			return "", err
 		}
 		next.Pages = pages
 	}
 
-	stale := stalePages(old, next.Pages, changed, b.dest)
+	stale := stalePages(old, next.Pages, changed, b.dest, b.draft)
 	if b.change != nil && (len(changed) > 0 || retold) {
-		// These rest on the whole of the change.
-		for slug := range pageGuides {
-			stale[slug] = true
+		// Every page of a change's wiki rests on the whole of it.
+		for _, p := range next.Pages {
+			stale[p.Slug] = true
 		}
 	}
 	if len(stale) == 0 {
@@ -205,8 +212,8 @@ func (b *builder) build(ctx context.Context) (string, error) {
 
 // stalePages returns the slugs of the pages that need writing: new ones,
 // ones whose subject has changed, ones resting on a changed file, ones whose
-// last writing failed, and ones whose file is gone.
-func stalePages(old *state, pages []page, changed []string, dest string) map[string]bool {
+// last writing failed, ones whose file is gone, and unless drafting, drafts.
+func stalePages(old *state, pages []page, changed []string, dest string, draft bool) map[string]bool {
 	stale := map[string]bool{}
 	for _, p := range pages {
 		var was *page
@@ -214,7 +221,7 @@ func stalePages(old *state, pages []page, changed []string, dest string) map[str
 			was = old.page(p.Slug)
 		}
 		switch {
-		case was == nil, was.Stale, p.Stale,
+		case was == nil, was.Stale, p.Stale, was.Draft && !draft,
 			was.Title != p.Title, was.Description != p.Description:
 			stale[p.Slug] = true
 		default:
@@ -235,7 +242,7 @@ func stalePages(old *state, pages []page, changed []string, dest string) map[str
 func (b *builder) writePages(ctx context.Context, t *tree, old, next *state, stale map[string]bool, changed []string) error {
 	var (
 		wg    sync.WaitGroup
-		sem   = make(chan struct{}, b.jobs)
+		sem   chan struct{}
 		mu    sync.Mutex
 		errs  []error
 		done  int
@@ -243,12 +250,19 @@ func (b *builder) writePages(ctx context.Context, t *tree, old, next *state, sta
 		// Read once here, as the pages are written to as they finish.
 		outline = mustJSON(outlineOf(next.Pages, false))
 	)
+	if b.jobs > 0 {
+		sem = make(chan struct{}, b.jobs)
+	}
+	if total > 0 {
+		b.logf("writing %s", pluralize(total, "page"))
+	}
 	for i := range next.Pages {
 		p := &next.Pages[i]
 		if !stale[p.Slug] {
 			if old != nil {
 				if was := old.page(p.Slug); was != nil {
 					p.Files = union(p.Files, was.Files)
+					p.Draft = was.Draft
 				}
 			}
 			continue
@@ -257,12 +271,14 @@ func (b *builder) writePages(ctx context.Context, t *tree, old, next *state, sta
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				return
+			if sem != nil {
+				select {
+				case sem <- struct{}{}:
+				case <-ctx.Done():
+					return
+				}
+				defer func() { <-sem }()
 			}
-			defer func() { <-sem }()
 			start := time.Now()
 			files, err := b.writePage(ctx, t, next.Name, outline, p, changed)
 			mu.Lock()
@@ -276,6 +292,7 @@ func (b *builder) writePages(ctx context.Context, t *tree, old, next *state, sta
 			}
 			p.Files = files
 			p.Stale = false
+			p.Draft = b.draft
 			done++
 			b.logf("wrote %s (%d/%d, %s)", p.Slug, done, total, time.Since(start).Round(time.Second))
 		}()
@@ -305,11 +322,15 @@ func (b *builder) writePage(ctx context.Context, t *tree, name, outline string, 
 		Markdown string   `json:"markdown"`
 		Sources  []string `json:"sources"`
 	}
-	prompt := pagePrompt(name, outline, p, previous, relevant)
+	prompt := pagePrompt(name, outline, p, previous, relevant, b.draft)
 	if b.change != nil {
-		prompt = diffPagePrompt(b.change, outline, p, previous, relevant)
+		prompt = diffPagePrompt(b.change, outline, p, previous, relevant, b.draft)
 	}
-	cost, err := b.harness.ask(ctx, b.source, prompt, pageSchema, &answer)
+	level := minor
+	if p.Slug == "overview" || p.Slug == "walkthrough" {
+		level = major
+	}
+	cost, err := b.harness.ask(ctx, b.source, prompt, pageSchema, level, &answer)
 	b.addCost(cost)
 	if err != nil {
 		return nil, err
@@ -331,25 +352,18 @@ func (b *builder) writePage(ctx context.Context, t *tree, name, outline string, 
 }
 
 // plan has the agent outline the wiki, or revise the outline of old in light
-// of the changed files, and of the change's new commit messages when retold.
-func (b *builder) plan(ctx context.Context, t *tree, old *state, changed []string, retold bool) ([]page, error) {
+// of the changed files.
+func (b *builder) plan(ctx context.Context, t *tree, old *state, changed []string) ([]page, error) {
 	var answer struct {
 		Pages []page `json:"pages"`
 	}
 	start := time.Now()
-	prompt := planPrompt(t, old, changed)
-	if b.change != nil {
-		prompt = diffPlanPrompt(b.change, old, changed, retold)
-	}
-	cost, err := b.harness.ask(ctx, b.source, prompt, planSchema, &answer)
+	cost, err := b.harness.ask(ctx, b.source, planPrompt(t, old, changed, b.draft), planSchema, major, &answer)
 	b.addCost(cost)
 	if err != nil {
 		return nil, fmt.Errorf("planning: %w", err)
 	}
 	pages := tidyOutline(answer.Pages, t)
-	if b.change != nil {
-		pages = pinPages(pages, []page{overviewPage, walkthroughPage}, t.sortedPaths())
-	}
 	if len(pages) == 0 {
 		return nil, errors.New("planning: the outline came back empty")
 	}
@@ -419,39 +433,6 @@ func tidyOutline(planned []page, t *tree) []page {
 		}
 	}
 	return ordered
-}
-
-// pinPages puts the given pages first in an outline, with their children
-// after them, as top-level pages; any the outline lacks are added as given,
-// resting on files.
-func pinPages(pages, pinned []page, files []string) []page {
-	isPinned := map[string]bool{}
-	for _, p := range pinned {
-		isPinned[p.Slug] = true
-	}
-	var out []page
-	for _, want := range pinned {
-		p := want
-		p.Files = files
-		for _, q := range pages {
-			if q.Slug == want.Slug {
-				p = q
-				p.Parent = ""
-			}
-		}
-		out = append(out, p)
-		for _, q := range pages {
-			if q.Parent == want.Slug && !isPinned[q.Slug] {
-				out = append(out, q)
-			}
-		}
-	}
-	for _, p := range pages {
-		if !isPinned[p.Slug] && !isPinned[p.Parent] {
-			out = append(out, p)
-		}
-	}
-	return out
 }
 
 var citation = regexp.MustCompile(`\]\(([^)\s#]+)(?:#L\d+(?:-L?\d+)?)?\)`)
