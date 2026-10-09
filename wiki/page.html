@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · {{.Wiki}}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;700&display=swap">
+<style>
+  html { background: #fff; color: #000; scroll-padding-top: 1em; }
+  body {
+    font-family: "Times New Roman", Times, serif;
+    font-size: 17px;
+    line-height: 1.4;
+    margin: 0;
+    padding: 2em 1em 4em;
+  }
+  main { max-width: 34em; margin: 0 auto; }
+  .wiki { font-size: 0.9em; text-align: center; margin: 0 0 1.5em; }
+  h1 { font-size: 1em; font-weight: bold; text-align: center; margin: 0 0 2em; }
+  h2 { font-size: 1em; font-weight: bold; margin: 2em 0 0.4em; }
+  h3 { font-size: 1em; font-weight: bold; font-style: italic; margin: 1.4em 0 0.4em; }
+  h4 { font-size: 1em; font-weight: normal; font-style: italic; margin: 1.2em 0 0.4em; }
+  p, ul, ol, pre, table, blockquote { margin: 0 0 0.8em; }
+  ul, ol { padding-left: 1.4em; }
+  li > p { margin: 0; }
+  pre, code { font-family: "Source Code Pro", "Menlo", "Courier New", Courier, monospace; font-size: 0.88em; }
+  pre code { font-size: 1em; }
+  pre { padding-left: 1.4em; white-space: pre-wrap; }
+  blockquote { padding-left: 1.4em; margin-left: 0; }
+  a { color: #00e; }
+  a:visited { color: #551a8b; }
+  table { border-collapse: collapse; display: block; overflow-x: auto; }
+  th, td { text-align: left; vertical-align: top; padding: 0.15em 1em 0.15em 0; }
+  th { border-bottom: 1px solid #000; }
+  img { max-width: 100%; }
+  p.sources { font-size: 0.85em; }
+  details.files { margin: 0 0 1.6em; }
+  details.files summary { cursor: pointer; }
+  details.files ul { list-style: none; padding-left: 1.4em; margin: 0.4em 0 0; }
+  details.files li { font-family: "Source Code Pro", "Menlo", monospace; font-size: 0.8em; }
+  .diagram { margin: 0 0 0.8em; overflow-x: auto; text-align: center; }
+  .diagram svg { max-width: 100%; height: auto; }
+  .pager { margin-top: 3em; font-size: 0.9em; display: flex; justify-content: space-between; gap: 1em; }
+  .pager .next { text-align: right; margin-left: auto; }
+
+  nav.pages { font-size: 0.9em; }
+  nav.pages ol { list-style: none; padding: 0; margin: 0; }
+  nav.pages li { margin: 0.15em 0; }
+  nav.pages li.child { padding-left: 1.4em; }
+  nav.pages li.current > a { color: #000; font-weight: bold; text-decoration: none; }
+  nav.pages > ol > li > a { display: grid; grid-template-columns: 2.2em 1fr; }
+  nav.pages > ol > li.child > a { grid-template-columns: 2.4em 1fr; }
+  nav.pages ul.sections { list-style: none; padding-left: 2.2em; margin: 0.2em 0 0.4em; font-size: 0.95em; }
+  nav.pages ul.sections li.l3 { padding-left: 1em; }
+  nav.pages h2 { margin: 0 0 0.6em; }
+
+  @media (min-width: 1100px) {
+    nav.pages {
+      position: fixed; top: 0; left: 0; bottom: 0; width: 16em;
+      overflow-y: auto; padding: 2.4em 1em 2em 1.5em;
+    }
+    nav.pages h2 { display: none; }
+  }
+  @media (max-width: 1099px) {
+    nav.pages { max-width: 34em; margin: 3em auto 0; }
+    nav.pages ul.sections { display: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+<div class="wiki"><a href="index.html">{{.Wiki}}</a>{{if .Generated}} · updated {{.Generated}}{{end}}{{if .Revision}} · <code>{{.Revision}}</code>{{end}}</div>
+<h1>{{.Title}}</h1>
+{{- if .Sources}}
+<details class="files">
+<summary>Relevant source files</summary>
+<ul>
+{{- range .Sources}}
+<li><a href="{{.Href}}">{{.Path}}</a></li>
+{{- end}}
+</ul>
+</details>
+{{- end}}
+{{.Content}}
+<div class="pager">
+{{- if .Prev}}<span class="prev">Previous: <a href="{{.Prev.Slug}}.html">{{.Prev.Title}}</a></span>{{end}}
+{{- if .Next}}<span class="next">Next: <a href="{{.Next.Slug}}.html">{{.Next.Title}}</a></span>{{end}}
+</div>
+</main>
+<nav class="pages">
+<h2>Pages</h2>
+<ol>
+{{- range .Nav}}
+<li class="{{if .Child}}child{{else}}top{{end}}{{if .Current}} current{{end}}"><a href="{{.Slug}}.html"><span class="num">{{.Number}}</span>{{.Title}}</a>
+{{- if and .Current $.TOC}}
+<ul class="sections">
+{{- range $.TOC}}
+<li class="l{{.Level}}"><a href="#{{.ID}}">{{.Text}}</a></li>
+{{- end}}
+</ul>
+{{- end}}
+</li>
+{{- end}}
+</ol>
+</nav>
+<script type="module">
+// Diagrams are drawn in the browser; one that does not parse stays as its source.
+const blocks = document.querySelectorAll("main pre code.language-mermaid");
+if (blocks.length) {
+  const { default: mermaid } = await import("https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs");
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: "base",
+    securityLevel: "strict",
+    themeVariables: {
+      fontFamily: '"Times New Roman", Times, serif',
+      fontSize: "15px",
+      primaryColor: "#fff",
+      primaryBorderColor: "#000",
+      primaryTextColor: "#000",
+      lineColor: "#000",
+      secondaryColor: "#fff",
+      tertiaryColor: "#fff",
+      edgeLabelBackground: "#fff",
+      clusterBkg: "#fff",
+      clusterBorder: "#000",
+      noteBkgColor: "#fff",
+      noteBorderColor: "#000",
+      actorBkg: "#fff",
+      actorBorder: "#000",
+      signalColor: "#000",
+    },
+  });
+  let n = 0;
+  for (const code of blocks) {
+    try {
+      const { svg } = await mermaid.render("diagram-" + n++, code.textContent);
+      const div = document.createElement("div");
+      div.className = "diagram";
+      div.innerHTML = svg;
+      code.parentElement.replaceWith(div);
+    } catch (e) {
+      console.warn("mermaid:", e);
+    }
+  }
+}
+</script>
+</body>
+</html>

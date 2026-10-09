@@ -189,6 +189,40 @@ Git progress goes to stderr; stdout remains reserved for resulting paths.
 
 Run `try -help` for complete usage and configuration instructions.
 
+## `wiki`
+
+`wiki` writes a wiki for a code base, after [DeepWiki](https://deepwiki.com):
+an overview, then a page for each of its parts, with diagrams, tables, and
+citations of the source down to the line. A coding agent does the reading and
+the writing — Claude Code through `claude -p`, or Codex through `codex exec`
+with `-harness codex` — so authentication and models are the agent's own
+business; it is given only the tools to read the source. It is run once to plan
+the wiki and then once for each page, several at a time.
+
+The wiki is Markdown, a file per page, in `~/wiki/NAME` (or `$WIKI_DIR/NAME`,
+or the destination given), and `wiki` renders it as plain HTML in `html/`
+there: Times New Roman and Source Code Pro, the pages numbered down the side,
+Mermaid diagrams drawn in the browser, and citations linked to GitHub when the
+source is a GitHub clone, or to the files themselves when it is not.
+
+Run again, `wiki` updates rather than starts over. `wiki.json` keeps the outline
+and a hash of every source file; when nothing has changed the pages are only
+rendered, and when something has, the agent revises the outline and rewrites
+just the pages that rest on what changed, each from its last version. `-full`
+starts over, and `-render` renders pages edited by hand.
+
+```sh
+cd wiki
+go build
+
+./wiki ~/src/apex
+./wiki ~/src/apex ~/mycustomwikipath
+./wiki -harness codex -j 8 .
+./wiki -render ~/wiki/apex
+```
+
+Run `wiki -help` for complete usage.
+
 ## `work`
 
 `work` lists, creates, and removes linked Sapling worktrees. It uses the
