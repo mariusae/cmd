@@ -200,7 +200,7 @@ func (b *builder) build(ctx context.Context) (string, error) {
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
-	index, err := render(b.dest, next)
+	index, err := render(b.dest, next, b.log)
 	if err != nil {
 		return "", err
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -64,7 +65,7 @@ func TestRender(t *testing.T) {
 	os.MkdirAll(filepath.Join(dest, "html"), 0o755)
 	os.WriteFile(filepath.Join(dest, "html", "old.html"), nil, 0o644)
 
-	index, err := render(dest, s)
+	index, err := render(dest, s, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,6 +91,11 @@ func TestRender(t *testing.T) {
 		if !strings.Contains(page, want) {
 			t.Errorf("page lacks %s", want)
 		}
+	}
+	// The fonts are in the page, for viewers that allow no stylesheets from
+	// elsewhere.
+	if strings.Count(page, "src: url(data:font/woff2;base64,d09GMg") != 2 || strings.Contains(page, "fonts.googleapis.com") {
+		t.Error("the fonts are not embedded")
 	}
 	if strings.Count(page, "<h1") != 1 {
 		t.Error("the title heading was not taken out of the content")

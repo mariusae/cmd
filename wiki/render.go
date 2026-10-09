@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	_ "embed"
+	"encoding/base64"
 	"fmt"
 	"html/template"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,23 +15,46 @@ import (
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/parser"
+	"github.com/yuin/goldmark/renderer"
 	"github.com/yuin/goldmark/text"
 	"github.com/yuin/goldmark/util"
 )
 
 // The HTML is a static site in DEST/html: a page for each page of the wiki,
-// and index.html for the first. Mermaid and highlight.js come from a CDN and
-// are applied in the browser; without them the diagrams show as their source.
+// and index.html for the first. Mermaid comes from a CDN and draws the diagrams
+// in the browser; without it they show as pictures drawn with the wiki (see
+// diagram.go), or failing those, as their source.
 
 //go:embed page.html
 var pageHTML string
 
 var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
-	"inc": func(i int) int { return i + 1 },
+	"inc":           func(i int) int { return i + 1 },
+	"fonts":         func() template.CSS { return fontFaces },
+	"mermaidConfig": func() template.JS { return template.JS(mermaidConfig) },
 }).Parse(pageHTML))
 
+// The code is set in Inconsolata, whose Latin letters are embedded in every
+// page as data: URLs: pages shown where a Content-Security-Policy allows no
+// stylesheets or fonts from elsewhere, as Meta's artifacts are, still have it.
+// The fonts are Fontsource's (@fontsource/inconsolata 5.3.0), under the SIL
+// Open Font License in fonts/OFL.txt.
+//
+//go:embed fonts/inconsolata-latin-400-normal.woff2
+var inconsolata400 []byte
+
+//go:embed fonts/inconsolata-latin-700-normal.woff2
+var inconsolata700 []byte
+
+var fontFaces = template.CSS(fontFace(400, inconsolata400) + fontFace(700, inconsolata700))
+
+func fontFace(weight int, woff2 []byte) string {
+	return fmt.Sprintf("  @font-face { font-family: Inconsolata; font-style: normal; font-weight: %d; font-display: swap; src: url(data:font/woff2;base64,%s) format(\"woff2\"); }\n",
+		weight, base64.StdEncoding.EncodeToString(woff2))
+}
+
 // renderDir renders the wiki in dest from its state, as -render does.
-func renderDir(dest string) (string, error) {
+func renderDir(dest string, log io.Writer) (string, error) {
 	s, err := loadState(dest)
 	if err != nil {
 		return "", err
@@ -37,7 +62,7 @@ func renderDir(dest string) (string, error) {
 	if s == nil {
 		return "", fmt.Errorf("%s has no %s; is it a wiki?", dest, stateFile)
 	}
-	return render(dest, s)
+	return render(dest, s, log)
 }
 
 type navEntry struct {
@@ -67,8 +92,8 @@ type pageView struct {
 }
 
 // render writes DEST/html from the Markdown pages and returns the path of
-// index.html.
-func render(dest string, s *state) (string, error) {
+// index.html. It notes on log when the diagrams cannot be drawn as pictures.
+func render(dest string, s *state, log io.Writer) (string, error) {
 	out := filepath.Join(dest, "html")
 	if err := os.MkdirAll(out, 0o755); err != nil {
 		return "", err
@@ -92,20 +117,39 @@ func render(dest string, s *state) (string, error) {
 	for _, p := range s.Pages {
 		l.pages[p.Slug] = true
 	}
+	diagrams := &diagramRenderer{}
 	md := goldmark.New(
 		goldmark.WithExtensions(extension.GFM),
 		goldmark.WithParserOptions(
 			parser.WithAutoHeadingID(),
 			parser.WithASTTransformers(util.Prioritized(l, 100)),
 		),
+		goldmark.WithRendererOptions(renderer.WithNodeRenderers(util.Prioritized(diagrams, 100))),
 	)
 
-	keep := map[string]bool{"index.html": true}
+	// Every page is parsed before any is rendered, so that the pictures of
+	// all their diagrams are drawn at once.
+	sources := make([][]byte, len(s.Pages))
+	docs := make([]ast.Node, len(s.Pages))
+	var mermaid []string
 	for i, p := range s.Pages {
 		source, err := os.ReadFile(filepath.Join(dest, p.Slug+".md"))
 		if err != nil {
 			source = []byte("# " + p.Title + "\n\n*This page has not been written yet.*\n")
 		}
+		sources[i] = source
+		docs[i] = md.Parser().Parse(text.NewReader(source))
+		mermaid = append(mermaid, mermaidSources(docs[i], source)...)
+	}
+	var err error
+	diagrams.pics, err = pictures(dest, mermaid)
+	if err != nil {
+		fmt.Fprintf(log, "wiki: diagrams have no pictures for where Mermaid cannot load: %v\n", err)
+	}
+
+	keep := map[string]bool{"index.html": true}
+	for i, p := range s.Pages {
+		source, doc := sources[i], docs[i]
 		view := pageView{
 			Wiki:     s.Name,
 			Title:    p.Title,
@@ -127,7 +171,6 @@ func render(dest string, s *state) (string, error) {
 			view.Sources = append(view.Sources, sourceLink{Path: f, Href: l.base + f})
 		}
 
-		doc := md.Parser().Parse(text.NewReader(source))
 		if title := takeTitle(doc, source); title != "" {
 			view.Title = title
 		}

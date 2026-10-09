@@ -4,10 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}} · {{.Wiki}}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inconsolata:wght@400;700&display=swap">
 <style>
+{{fonts}}
   html { background: #fff; color: #000; scroll-padding-top: 1em; }
   body {
     font-family: "Times New Roman", Times, serif;
@@ -42,6 +40,7 @@
   details.files li { font-family: Inconsolata, Menlo, monospace; font-size: 0.88em; }
   .diagram { margin: 0 0 0.8em; overflow-x: auto; text-align: center; }
   .diagram svg { max-width: 100%; height: auto; }
+  figure.diagram img { height: auto; }
   .pager { margin-top: 3em; font-size: 0.9em; display: flex; justify-content: space-between; gap: 1em; }
   .pager .next { text-align: right; margin-left: auto; }
 
@@ -106,33 +105,12 @@
 </ol>
 </nav>
 <script type="module">
-// Diagrams are drawn in the browser; one that does not parse stays as its source.
+// Diagrams are drawn in the browser, over the pictures of them drawn with the
+// wiki, if any; one that does not parse stays as its picture, or its source.
 const blocks = document.querySelectorAll("main pre code.language-mermaid");
 if (blocks.length) {
   const { default: mermaid } = await import("https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs");
-  mermaid.initialize({
-    startOnLoad: false,
-    theme: "base",
-    securityLevel: "strict",
-    themeVariables: {
-      fontFamily: '"Times New Roman", Times, serif',
-      fontSize: "15px",
-      primaryColor: "#fff",
-      primaryBorderColor: "#000",
-      primaryTextColor: "#000",
-      lineColor: "#000",
-      secondaryColor: "#fff",
-      tertiaryColor: "#fff",
-      edgeLabelBackground: "#fff",
-      clusterBkg: "#fff",
-      clusterBorder: "#000",
-      noteBkgColor: "#fff",
-      noteBorderColor: "#000",
-      actorBkg: "#fff",
-      actorBorder: "#000",
-      signalColor: "#000",
-    },
-  });
+  mermaid.initialize({{mermaidConfig}});
   let n = 0;
   for (const code of blocks) {
     try {
@@ -140,7 +118,7 @@ if (blocks.length) {
       const div = document.createElement("div");
       div.className = "diagram";
       div.innerHTML = svg;
-      code.parentElement.replaceWith(div);
+      (code.closest("figure.diagram") || code.parentElement).replaceWith(div);
     } catch (e) {
       console.warn("mermaid:", e);
     }

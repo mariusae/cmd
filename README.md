@@ -207,7 +207,10 @@ The wiki is Markdown, a file per page, in `~/wiki/NAME` (or `$WIKI_DIR/NAME`,
 or the destination given), and `wiki` renders it as plain HTML in `html/`
 there: Times New Roman and Inconsolata, the pages numbered down the side,
 Mermaid diagrams drawn in the browser, and citations linked to GitHub when the
-source is a GitHub clone, or to the files themselves when it is not.
+source is a GitHub clone, or to the files themselves when it is not. Everything
+a page needs offline is in it: the font, and a picture of each diagram, drawn
+by headless Chrome when the wiki is rendered, which stands in when Mermaid
+cannot be loaded.
 
 Run again, `wiki` updates rather than starts over. `wiki.json` keeps the outline
 and a hash of every source file; when nothing has changed the pages are only

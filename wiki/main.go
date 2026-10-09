@@ -62,6 +62,11 @@ The Markdown is the wiki: edit a page by hand, and -render shows the change.
 Links between pages are written [Title](slug.md), and citations of the source
 [path:12-40](path#L12-L40); in HTML the first go to the page, and the second
 to the file on GitHub when SOURCE is a GitHub clone, or on disk otherwise.
+Diagrams are drawn in the browser by Mermaid, from a CDN. Each also comes in
+the page as a picture, which shows where Mermaid cannot be loaded; wiki has
+headless Chrome draw them — the first of chrome, google-chrome, chromium and
+the like on $PATH, or on macOS the Chrome app, or $WIKI_CHROME — and keeps
+them in DEST/diagrams. Without Chrome, the pages are as before.
 
 Flags:
   -harness NAME  the agent to run: claude (the default) or codex
@@ -120,7 +125,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 			fmt.Fprintln(stderr, "usage: wiki -render DEST")
 			return 2
 		}
-		index, err := renderDir(rest[0])
+		index, err := renderDir(rest[0], stderr)
 		if err != nil {
 			fmt.Fprintf(stderr, "wiki: %v\n", err)
 			return 1
