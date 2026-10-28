@@ -39,28 +39,33 @@ import (
 //go:embed mermaid/mermaid.min.js.gz
 var mermaidJS []byte
 
-// mermaidConfig is how diagrams are drawn, in the browser and in pictures.
+// mermaidConfig is how diagrams are drawn, in the browser and in pictures:
+// in Lato, in greys on white, which the page inverts in the dark.
 const mermaidConfig = `{
     startOnLoad: false,
     theme: "base",
     securityLevel: "strict",
     themeVariables: {
-      fontFamily: '"Times New Roman", Times, serif',
+      fontFamily: 'Lato, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif',
       fontSize: "15px",
       primaryColor: "#fff",
-      primaryBorderColor: "#000",
-      primaryTextColor: "#000",
-      lineColor: "#000",
+      primaryBorderColor: "#333",
+      primaryTextColor: "#333",
+      textColor: "#333",
+      lineColor: "#333",
       secondaryColor: "#fff",
       tertiaryColor: "#fff",
       edgeLabelBackground: "#fff",
-      clusterBkg: "#fff",
-      clusterBorder: "#000",
-      noteBkgColor: "#fff",
-      noteBorderColor: "#000",
+      clusterBkg: "#f6f6f6",
+      clusterBorder: "#ccc",
+      noteBkgColor: "#f6f6f6",
+      noteBorderColor: "#ccc",
+      noteTextColor: "#333",
       actorBkg: "#fff",
-      actorBorder: "#000",
-      signalColor: "#000",
+      actorBorder: "#333",
+      actorTextColor: "#333",
+      signalColor: "#333",
+      signalTextColor: "#333",
     },
   }`
 
@@ -205,7 +210,11 @@ func draw(sources []string) ([]drawing, error) {
 	if err != nil {
 		return nil, err
 	}
-	page := strings.NewReplacer("DIAGRAMS", string(list), "CONFIG", mermaidConfig, "SCALE", fmt.Sprint(pictureScale)).Replace(drawingPage)
+	fonts, err := json.Marshal(diagramFonts)
+	if err != nil {
+		return nil, err
+	}
+	page := strings.NewReplacer("DIAGRAMS", string(list), "CONFIG", mermaidConfig, "SCALE", fmt.Sprint(pictureScale), "FONTS", string(fonts)).Replace(drawingPage)
 	if err := os.WriteFile(filepath.Join(tmp, "draw.html"), []byte(page), 0o644); err != nil {
 		return nil, err
 	}
@@ -240,20 +249,37 @@ func draw(sources []string) ([]drawing, error) {
 
 var drawnOut = regexp.MustCompile(`(?s)<pre id="drawn">(.*?)</pre>`)
 
+// diagramFonts are the fonts of the diagrams' labels, Lato and its bold, as
+// @font-face rules.
+var diagramFonts = fontFaceRules(fonts[:2])
+
 // drawingPage draws each diagram as Mermaid would in the page, then as a PNG,
 // and leaves the PNGs as JSON in pre#drawn for --dump-dom. Labels are drawn
-// as SVG text rather than HTML, which would taint the canvas.
+// as SVG text rather than HTML, which would taint the canvas. The fonts are
+// in the page, where the labels are measured, and in each SVG, which as an
+// image sees nothing of the page.
 const drawingPage = `<!doctype html>
 <html><head><meta charset="utf-8"></head><body>
 <script src="mermaid.min.js"></script>
 <script>
 const diagrams = DIAGRAMS;
 const scale = SCALE;
+const fonts = FONTS;
 mermaid.initialize(Object.assign(CONFIG, {htmlLabels: false, flowchart: {htmlLabels: false}}));
+
+async function loadFonts() {
+  const style = document.createElement("style");
+  style.textContent = fonts;
+  document.head.appendChild(style);
+  await Promise.all(["15px Lato", "bold 15px Lato"].map(f => document.fonts.load(f)));
+}
 
 async function picture(svg) {
   const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
   const root = doc.documentElement;
+  const style = doc.createElementNS("http://www.w3.org/2000/svg", "style");
+  style.textContent = fonts;
+  root.insertBefore(style, root.firstChild);
   const box = (root.getAttribute("viewBox") || "").split(/[\s,]+/).map(Number);
   if (box.length === 4 && box[2] > 0 && box[3] > 0) {
     root.setAttribute("width", box[2]);
@@ -274,6 +300,7 @@ async function picture(svg) {
 }
 
 (async () => {
+  await loadFonts();
   const drawn = [];
   for (let i = 0; i < diagrams.length; i++) {
     try {

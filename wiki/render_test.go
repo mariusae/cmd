@@ -86,7 +86,7 @@ func TestRender(t *testing.T) {
 		`<li class="l3"><a href="#detail">Detail</a>`,
 		"Relevant source files",
 		`<li class="top current"><a href="overview.html"><span class="num">1</span>`,
-		`<span class="num">1.1</span>Unwritten</a>`,
+		`<span class="num">1.1</span><span class="title">Unwritten</span></a>`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("page lacks %s", want)
@@ -94,7 +94,7 @@ func TestRender(t *testing.T) {
 	}
 	// The fonts are in the page, for viewers that allow no stylesheets from
 	// elsewhere.
-	if strings.Count(page, "src: url(data:font/woff2;base64,d09GMg") != 2 || strings.Contains(page, "fonts.googleapis.com") {
+	if strings.Count(page, "src: url(data:font/woff2;base64,d09GMg") != len(fonts) || strings.Contains(page, "fonts.googleapis.com") {
 		t.Error("the fonts are not embedded")
 	}
 	if strings.Count(page, "<h1") != 1 {

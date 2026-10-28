@@ -6,71 +6,262 @@
 <title>{{.Title}} · {{.Wiki}}</title>
 <style>
 {{fonts}}
-  html { background: #fff; color: #000; scroll-padding-top: 1em; }
-  body {
-    font-family: "Times New Roman", Times, serif;
-    font-size: 17px;
-    line-height: 1.4;
-    margin: 0;
-    padding: 2em 1em 4em;
+  /* The style is mutable.org's: Lato at 17px/1.6 on a 720px measure, headings
+     in Fraunces, code in Source Code Pro. */
+  :root {
+    --text: #333;
+    --heading: #15171a;
+    --muted: #999;
+    --meta: #777;
+    --rule: #e6e6e6;
+    --code-bg: #f6f6f6;
+    --bg: #fff;
+    --accent: #1264a3;
+    --link-hover: rgba(29, 155, 209, 0.12);
+    --font-sans: Lato, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --font-display: Fraunces, Georgia, serif;
+    --font-mono: "Source Code Pro", Menlo, Consolas, Monaco, "Liberation Mono", monospace;
+    --measure: 720px;
+    --gap: 2.4rem;
+    --nav: 26rem;
+    /* Diagrams are drawn black on white, and turned light on dark with the page. */
+    --diagram-filter: none;
   }
-  main { max-width: 34em; margin: 0 auto; }
-  .wiki { font-size: 0.9em; text-align: center; margin: 0 0 1.5em; }
-  h1 { font-size: 1em; font-weight: bold; text-align: center; margin: 0 0 2em; }
-  h2 { font-size: 1em; font-weight: bold; margin: 2em 0 0.4em; }
-  h3 { font-size: 1em; font-weight: bold; font-style: italic; margin: 1.4em 0 0.4em; }
-  h4 { font-size: 1em; font-weight: normal; font-style: italic; margin: 1.2em 0 0.4em; }
-  p, ul, ol, pre, table, blockquote { margin: 0 0 0.8em; }
-  ul, ol { padding-left: 1.4em; }
-  li > p { margin: 0; }
-  pre, code { font-family: Inconsolata, Menlo, monospace; font-size: 0.95em; }
-  pre code { font-size: 1em; }
-  pre { padding-left: 1.4em; white-space: pre-wrap; }
-  blockquote { padding-left: 1.4em; margin-left: 0; }
-  a { color: #00e; }
-  a:visited { color: #551a8b; }
-  table { border-collapse: collapse; display: block; overflow-x: auto; }
-  th, td { text-align: left; vertical-align: top; padding: 0.15em 1em 0.15em 0; }
-  th { border-bottom: 1px solid #000; }
-  img { max-width: 100%; }
-  p.sources { font-size: 0.85em; }
-  details.files { margin: 0 0 1.6em; }
-  details.files summary { cursor: pointer; }
-  details.files ul { list-style: none; padding-left: 1.4em; margin: 0.4em 0 0; }
-  details.files li { font-family: Inconsolata, Menlo, monospace; font-size: 0.88em; }
-  .diagram { margin: 0 0 0.8em; overflow-x: auto; text-align: center; }
-  .diagram svg { max-width: 100%; height: auto; }
-  figure.diagram img { height: auto; }
-  .pager { margin-top: 3em; font-size: 0.9em; display: flex; justify-content: space-between; gap: 1em; }
-  .pager .next { text-align: right; margin-left: auto; }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --text: #d4d4d4;
+      --heading: #f2f2f2;
+      --muted: #999;
+      --meta: #a3a3a3;
+      --rule: #2e2e2e;
+      --code-bg: #1e1e1e;
+      --bg: #121212;
+      --accent: #1d9bd1;
+      --link-hover: rgba(29, 155, 209, 0.18);
+      --diagram-filter: invert(0.93);
+    }
+  }
 
-  nav.pages { font-size: 0.9em; }
-  nav.pages ol { list-style: none; padding: 0; margin: 0; }
-  nav.pages li { margin: 0.15em 0; }
-  nav.pages li.child { padding-left: 1.4em; }
-  nav.pages li.current > a { color: #000; font-weight: bold; text-decoration: none; }
-  nav.pages > ol > li > a { display: grid; grid-template-columns: 2.2em 1fr; }
-  nav.pages > ol > li.child > a { grid-template-columns: 2.4em 1fr; }
-  nav.pages ul.sections { list-style: none; padding-left: 2.2em; margin: 0.2em 0 0.4em; font-size: 0.95em; }
-  nav.pages ul.sections li.l3 { padding-left: 1em; }
-  nav.pages h2 { margin: 0 0 0.6em; }
+  *, *::before, *::after { box-sizing: border-box; }
+  html { font-size: 62.5%; scroll-padding-top: 2rem; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 1.6rem;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    color: var(--heading);
+    font-family: var(--font-display);
+    font-variation-settings: "SOFT" 50, "WONK" 0;
+    letter-spacing: -0.01em;
+    line-height: 1.15;
+    margin: 0;
+  }
+  p, ul, ol, pre, table, blockquote, figure { margin: 0; }
+  a { color: var(--heading); text-decoration: none; }
+  a:hover { opacity: 0.8; }
+  img { max-width: 100%; height: auto; }
+
+  /* The column: the page, the pages under it on narrow screens, the foot. */
+  .column {
+    width: min(var(--measure), 100% - var(--gap) * 2);
+    margin-inline: auto;
+  }
+  main { padding: 6vmin 0 0; }
+
+  /* The header, as a post's: the way back and the date, the title, and
+     where the source files go the post's excerpt. */
+  .page-header { margin-bottom: 3.2rem; }
+  .page-meta {
+    margin-bottom: 1rem;
+    color: var(--meta);
+    font-size: 1.2rem;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .page-meta .back { display: inline-flex; align-items: center; gap: 0.9rem; color: inherit; }
+  .page-meta .back:hover { opacity: 1; color: var(--heading); }
+  .page-meta time { margin-left: 1rem; }
+  h1 { font-size: 4rem; font-weight: 600; line-height: 1.2; word-break: break-word; }
+
+  details.files { margin-top: 2rem; color: var(--meta); font-size: 1.5rem; }
+  details.files summary { cursor: pointer; }
+  details.files summary:hover { color: var(--heading); }
+  details.files ul { list-style: none; margin: 0.8rem 0 0; padding-left: 1.4rem; }
+  details.files li { font-family: var(--font-mono); font-size: 0.9em; line-height: 1.8; }
+  details.files a { color: var(--meta); }
+  details.files a:hover { opacity: 1; color: var(--accent); }
+
+  /* The page. */
+  .content { font-size: 1.7rem; word-break: break-word; }
+  .content > * + * { margin-top: 1.25em; }
+  .content > :is(h2, h3, h4) { margin-top: 1.6em; }
+  .content > :is(h2, h3, h4) + * { margin-top: 0.8em; }
+  .content :is(h2, h3, h4) { font-weight: 500; }
+  .content h2 { font-size: 1.6em; }
+  .content h3 { font-size: 1.2em; }
+  .content h4 { font-size: 1.05em; }
+
+  .content a {
+    border-radius: 3px;
+    color: var(--accent);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.18em;
+    text-decoration-skip-ink: auto;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+  }
+  .content a:hover, .content a:focus-visible {
+    opacity: 1;
+    background: var(--link-hover);
+    box-shadow: 0 0 0 0.15em var(--link-hover);
+    outline: none;
+  }
+
+  .content :is(ul, ol) { padding-left: 2.8rem; }
+  .content li + li, .content li :is(ul, ol) { margin-top: 0.25em; }
+  .content li > p { margin: 0; }
+
+  .content blockquote {
+    padding-left: 2rem;
+    border-left: 3px solid var(--accent);
+    font-style: italic;
+  }
+  .content hr { height: 0; border: 0; border-top: 1px solid var(--rule); }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    padding: 0.1em 0.35em;
+    background: var(--code-bg);
+    border-radius: 3px;
+  }
+  .content pre {
+    overflow-x: auto;
+    padding: 1.8rem 2rem;
+    background: var(--code-bg);
+    border-radius: 4px;
+    font-size: 0.92em;
+    line-height: 1.5;
+  }
+  .content pre code { padding: 0; background: none; font-size: 1em; }
+
+  .content table {
+    border-collapse: collapse;
+    display: block;
+    overflow-x: auto;
+    font-size: 1.6rem;
+  }
+  .content th, .content td { border: 1px solid var(--rule); padding: 6px 12px; text-align: left; vertical-align: top; }
+  .content th { font-size: 1.2rem; font-weight: 700; letter-spacing: 0.2px; text-transform: uppercase; }
+
+  .content p.sources { color: var(--muted); font-size: 1.4rem; }
+  .content p.sources a { color: inherit; }
+  .content p.sources a:hover { color: var(--accent); }
+
+  .diagram { overflow-x: auto; text-align: center; }
+  .diagram svg, .diagram img { max-width: 100%; height: auto; filter: var(--diagram-filter); }
+
+  /* The headings of lists, as on the home page. */
+  .pager .label, nav.pages h2 {
+    color: var(--muted);
+    font-family: var(--font-sans);
+    font-size: 1.2rem;
+    font-variation-settings: normal;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    line-height: 1.6;
+    text-transform: uppercase;
+  }
+
+  /* Previous and next, under the page. */
+  .pager { display: flex; justify-content: space-between; gap: 2.4rem; margin-top: 6rem; }
+  .pager > span { display: flex; flex-direction: column; gap: 0.6rem; }
+  .pager a {
+    font-family: var(--font-display);
+    font-size: 1.9rem;
+    font-weight: 600;
+    font-variation-settings: "SOFT" 50, "WONK" 0;
+    letter-spacing: -0.005em;
+    line-height: 1.3;
+  }
+  .pager .next { margin-left: auto; text-align: right; }
+
+  /* The foot. */
+  .site-foot {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem 2rem;
+    padding: 4rem 0;
+    color: var(--muted);
+    font-size: 1.3rem;
+  }
+  .site-foot a { color: var(--muted); }
+  .site-foot code { font-family: var(--font-mono); padding: 0; background: none; }
+
+  /* The pages: down the side, quietly, on wide screens; under the page, as
+     the home page lists the writing, on narrow ones. */
+  nav.pages ol, nav.pages ul { list-style: none; margin: 0; padding: 0; }
+  nav.pages h2 { margin-bottom: 1rem; }
+  nav.pages a { display: flex; align-items: baseline; }
+  nav.pages .num { flex-shrink: 0; font-variant-numeric: tabular-nums; }
 
   @media (min-width: 1100px) {
     nav.pages {
-      position: fixed; top: 0; left: 0; bottom: 0; width: 16em;
-      overflow-y: auto; padding: 2.4em 1em 2em 1.5em;
+      position: fixed; top: 0; left: 0; bottom: 0; width: var(--nav); margin: 0;
+      overflow-y: auto; padding: 6vmin 2.4rem 4rem;
+      font-size: 1.4rem; line-height: 1.35;
     }
-    nav.pages h2 { display: none; }
+    nav.pages a { padding: 0.45rem 0; color: var(--text); }
+    nav.pages a:hover { opacity: 1; color: var(--heading); }
+    nav.pages .num { width: 3rem; color: var(--muted); font-size: 1.1rem; font-weight: 700; }
+    nav.pages li.child > a { padding-left: 1.2rem; }
+    nav.pages li.child .num { width: 3.6rem; }
+    nav.pages li.current > a { color: var(--heading); font-weight: 700; }
+    nav.pages li.current > a .num { color: var(--accent); }
+    nav.pages ul.sections { margin: 0.2rem 0 0.8rem 3rem; font-size: 1.3rem; }
+    nav.pages li.child > ul.sections { margin-left: 4.8rem; }
+    nav.pages ul.sections a { display: block; padding: 0.3rem 0; color: var(--meta); }
+    nav.pages ul.sections li.l3 { padding-left: 1.2rem; }
+    .column { margin-left: max(var(--nav) + var(--gap), 50% - var(--measure) / 2); }
   }
   @media (max-width: 1099px) {
-    nav.pages { max-width: 34em; margin: 3em auto 0; }
+    nav.pages { margin-top: 6rem; }
+    nav.pages a { gap: 1.5rem; padding: 1.5rem 0; line-height: 1.3; }
+    nav.pages li + li > a { border-top: 1px solid var(--rule); }
+    nav.pages .num { width: 4rem; color: var(--accent); font-size: 1.1rem; font-weight: 700; }
+    nav.pages .title {
+      color: var(--heading);
+      font-family: var(--font-display);
+      font-size: 1.9rem;
+      font-weight: 600;
+      font-variation-settings: "SOFT" 50, "WONK" 0;
+      letter-spacing: -0.005em;
+    }
+    nav.pages li.child .title { font-size: 1.7rem; font-weight: 500; }
+    nav.pages li.current .title { color: var(--accent); }
     nav.pages ul.sections { display: none; }
+  }
+  @media (max-width: 767px) {
+    .page-header { margin-bottom: 2.2rem; }
+    h1 { font-size: 3rem; }
+  }
+  @media (max-width: 600px) {
+    body { line-height: 1.5; }
+    .content pre { padding: 1.4rem 1.6rem; font-size: 0.82em; }
   }
 </style>
 </head>
 <body>
-<main>
-<div class="wiki"><a href="index.html">{{.Wiki}}</a>{{if .Generated}} · updated {{.Generated}}{{end}}{{if .Revision}} · <code>{{.Revision}}</code>{{end}}</div>
+<main class="column">
+<header class="page-header">
+<div class="page-meta"><a class="back" href="index.html"><svg viewBox="0 0 8 12" width="6" height="9" aria-hidden="true"><path d="M6.5 1.5 2 6l4.5 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>{{.Wiki}}</a>{{if .Generated}}<time>{{.Generated}}</time>{{end}}</div>
 <h1>{{.Title}}</h1>
 {{- if .Sources}}
 <details class="files">
@@ -82,17 +273,22 @@
 </ul>
 </details>
 {{- end}}
+</header>
+<div class="content">
 {{.Content}}
-<div class="pager">
-{{- if .Prev}}<span class="prev">Previous: <a href="{{.Prev.Slug}}.html">{{.Prev.Title}}</a></span>{{end}}
-{{- if .Next}}<span class="next">Next: <a href="{{.Next.Slug}}.html">{{.Next.Title}}</a></span>{{end}}
 </div>
+{{- if or .Prev .Next}}
+<div class="pager">
+{{- if .Prev}}<span class="prev"><span class="label">Previous</span><a href="{{.Prev.Slug}}.html">{{.Prev.Title}}</a></span>{{end}}
+{{- if .Next}}<span class="next"><span class="label">Next</span><a href="{{.Next.Slug}}.html">{{.Next.Title}}</a></span>{{end}}
+</div>
+{{- end}}
 </main>
-<nav class="pages">
+<nav class="pages column">
 <h2>Pages</h2>
 <ol>
 {{- range .Nav}}
-<li class="{{if .Child}}child{{else}}top{{end}}{{if .Current}} current{{end}}"><a href="{{.Slug}}.html"><span class="num">{{.Number}}</span>{{.Title}}</a>
+<li class="{{if .Child}}child{{else}}top{{end}}{{if .Current}} current{{end}}"><a href="{{.Slug}}.html"><span class="num">{{.Number}}</span><span class="title">{{.Title}}</span></a>
 {{- if and .Current $.TOC}}
 <ul class="sections">
 {{- range $.TOC}}
@@ -104,6 +300,10 @@
 {{- end}}
 </ol>
 </nav>
+<footer class="site-foot column">
+<a href="index.html">{{.Wiki}}</a>
+{{- if .Revision}}<span>Revision <code>{{.Revision}}</code></span>{{end}}
+</footer>
 <script type="module">
 // Diagrams are drawn in the browser, over the pictures of them drawn with the
 // wiki, if any; one that does not parse stays as its picture, or its source.
@@ -111,6 +311,7 @@ const blocks = document.querySelectorAll("main pre code.language-mermaid");
 if (blocks.length) {
   const { default: mermaid } = await import("https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs");
   mermaid.initialize({{mermaidConfig}});
+  await document.fonts.ready; // so that labels are measured in Lato
   let n = 0;
   for (const code of blocks) {
     try {

@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	_ "embed"
+	"embed"
 	"encoding/base64"
 	"fmt"
 	"html/template"
@@ -34,23 +34,45 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	"mermaidConfig": func() template.JS { return template.JS(mermaidConfig) },
 }).Parse(pageHTML))
 
-// The code is set in Inconsolata, whose Latin letters are embedded in every
-// page as data: URLs: pages shown where a Content-Security-Policy allows no
-// stylesheets or fonts from elsewhere, as Meta's artifacts are, still have it.
-// The fonts are Fontsource's (@fontsource/inconsolata 5.3.0), under the SIL
-// Open Font License in fonts/OFL.txt.
+// The type is mutable.org's: Lato, with headings in Fraunces and code in
+// Source Code Pro. Their Latin letters are embedded in every page as data:
+// URLs: pages shown where a Content-Security-Policy allows no stylesheets or
+// fonts from elsewhere, as Meta's artifacts are, still have them. The fonts
+// are Fontsource's (@fontsource/lato 5.3.0, @fontsource-variable/fraunces
+// 5.3.0 and @fontsource/source-code-pro 5.3.1), under the SIL Open Font
+// License in fonts/.
 //
-//go:embed fonts/inconsolata-latin-400-normal.woff2
-var inconsolata400 []byte
+//go:embed fonts/*.woff2
+var fontFiles embed.FS
 
-//go:embed fonts/inconsolata-latin-700-normal.woff2
-var inconsolata700 []byte
+type font struct {
+	family, style, weight, file string
+}
 
-var fontFaces = template.CSS(fontFace(400, inconsolata400) + fontFace(700, inconsolata700))
+var fonts = []font{
+	{"Lato", "normal", "400", "lato-latin-400-normal.woff2"},
+	{"Lato", "normal", "700", "lato-latin-700-normal.woff2"},
+	{"Lato", "italic", "400", "lato-latin-400-italic.woff2"},
+	{"Lato", "italic", "700", "lato-latin-700-italic.woff2"},
+	{"Fraunces", "normal", "100 900", "fraunces-latin-full-normal.woff2"},
+	{"Source Code Pro", "normal", "400", "source-code-pro-latin-400-normal.woff2"},
+	{"Source Code Pro", "normal", "600", "source-code-pro-latin-600-normal.woff2"},
+}
 
-func fontFace(weight int, woff2 []byte) string {
-	return fmt.Sprintf("  @font-face { font-family: Inconsolata; font-style: normal; font-weight: %d; font-display: swap; src: url(data:font/woff2;base64,%s) format(\"woff2\"); }\n",
-		weight, base64.StdEncoding.EncodeToString(woff2))
+var fontFaces = template.CSS(fontFaceRules(fonts))
+
+// fontFaceRules returns @font-face rules for fonts.
+func fontFaceRules(fonts []font) string {
+	var b strings.Builder
+	for _, f := range fonts {
+		woff2, err := fontFiles.ReadFile("fonts/" + f.file)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Fprintf(&b, "  @font-face { font-family: %q; font-style: %s; font-weight: %s; font-display: swap; src: url(data:font/woff2;base64,%s) format(\"woff2\"); }\n",
+			f.family, f.style, f.weight, base64.StdEncoding.EncodeToString(woff2))
+	}
+	return b.String()
 }
 
 // renderDir renders the wiki in dest from its state, as -render does.
@@ -157,7 +179,7 @@ func render(dest string, s *state, log io.Writer) (string, error) {
 			Nav:      make([]navEntry, len(nav)),
 		}
 		if !s.Generated.IsZero() {
-			view.Generated = s.Generated.Local().Format("January 2, 2006")
+			view.Generated = s.Generated.Local().Format("Jan 2, 2006")
 		}
 		copy(view.Nav, nav)
 		view.Nav[i].Current = true

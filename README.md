@@ -205,10 +205,11 @@ full.
 
 The wiki is Markdown, a file per page, in `~/wiki/NAME` (or `$WIKI_DIR/NAME`,
 or the destination given), and `wiki` renders it as plain HTML in `html/`
-there: Times New Roman and Inconsolata, the pages numbered down the side,
-Mermaid diagrams drawn in the browser, and citations linked to GitHub when the
-source is a GitHub clone, or to the files themselves when it is not. Everything
-a page needs offline is in it: the font, and a picture of each diagram, drawn
+there: set as mutable.org is, in Lato, Fraunces and Source Code Pro, light or
+dark with the system, the pages numbered down the side, Mermaid diagrams drawn
+in the browser, and citations linked to GitHub when the source is a GitHub
+clone, or to the files themselves when it is not. Everything a page needs
+offline is in it: the fonts, and a picture of each diagram, drawn
 by headless Chrome when the wiki is rendered, which stands in when Mermaid
 cannot be loaded.
 
