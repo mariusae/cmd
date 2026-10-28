@@ -34,13 +34,13 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	"mermaidConfig": func() template.JS { return template.JS(mermaidConfig) },
 }).Parse(pageHTML))
 
-// The type is mutable.org's: Lato, with headings in Fraunces and code in
-// Source Code Pro. Their Latin letters are embedded in every page as data:
-// URLs: pages shown where a Content-Security-Policy allows no stylesheets or
-// fonts from elsewhere, as Meta's artifacts are, still have them. The fonts
-// are Fontsource's (@fontsource/lato 5.3.0, @fontsource-variable/fraunces
-// 5.3.0 and @fontsource/source-code-pro 5.3.1), under the SIL Open Font
-// License in fonts/.
+// The type is Lato, as on mutable.org, with code in Inconsolata, narrower
+// than most, for the many names in the text. Their Latin letters are
+// embedded in every page as data: URLs: pages shown where a
+// Content-Security-Policy allows no stylesheets or fonts from elsewhere, as
+// Meta's artifacts are, still have them. The fonts are Fontsource's
+// (@fontsource/lato and @fontsource/inconsolata 5.3.0), under the SIL Open
+// Font License in fonts/.
 //
 //go:embed fonts/*.woff2
 var fontFiles embed.FS
@@ -54,9 +54,9 @@ var fonts = []font{
 	{"Lato", "normal", "700", "lato-latin-700-normal.woff2"},
 	{"Lato", "italic", "400", "lato-latin-400-italic.woff2"},
 	{"Lato", "italic", "700", "lato-latin-700-italic.woff2"},
-	{"Fraunces", "normal", "100 900", "fraunces-latin-full-normal.woff2"},
-	{"Source Code Pro", "normal", "400", "source-code-pro-latin-400-normal.woff2"},
-	{"Source Code Pro", "normal", "600", "source-code-pro-latin-600-normal.woff2"},
+	{"Lato", "normal", "900", "lato-latin-900-normal.woff2"},
+	{"Inconsolata", "normal", "400", "inconsolata-latin-400-normal.woff2"},
+	{"Inconsolata", "normal", "700", "inconsolata-latin-700-normal.woff2"},
 }
 
 var fontFaces = template.CSS(fontFaceRules(fonts))
@@ -303,7 +303,8 @@ func plainText(n ast.Node, source []byte) string {
 }
 
 // A linker points a page's links where they belong in HTML — another page's
-// HTML, or a source file — and marks its lines of citations.
+// HTML, or a source file — and marks its citations, the links to source
+// files, and its lines of them.
 type linker struct {
 	pages map[string]bool
 	files map[string]string
@@ -319,7 +320,11 @@ func (l *linker) Transform(doc *ast.Document, reader text.Reader, pc parser.Cont
 		}
 		switch n := n.(type) {
 		case *ast.Link:
-			n.Destination = []byte(l.resolve(string(n.Destination)))
+			dest, cite := l.resolve(string(n.Destination))
+			n.Destination = []byte(dest)
+			if cite {
+				n.SetAttributeString("class", []byte("cite"))
+			}
 		case *ast.Paragraph:
 			if strings.HasPrefix(plainText(n, source), "Sources:") {
 				n.SetAttributeString("class", []byte("sources"))
@@ -329,19 +334,21 @@ func (l *linker) Transform(doc *ast.Document, reader text.Reader, pc parser.Cont
 	})
 }
 
-func (l *linker) resolve(dest string) string {
+// resolve returns where a link goes in HTML, and whether it cites a source
+// file.
+func (l *linker) resolve(dest string) (string, bool) {
 	if dest == "" || strings.HasPrefix(dest, "#") || strings.Contains(dest, ":") {
-		return dest
+		return dest, false
 	}
 	path, frag, _ := strings.Cut(dest, "#")
 	if frag != "" {
 		frag = "#" + frag
 	}
 	if slug, ok := strings.CutSuffix(strings.TrimPrefix(path, "./"), ".md"); ok && l.pages[slug] {
-		return slug + ".html" + frag
+		return slug + ".html" + frag, false
 	}
 	if p := cleanPath(path); p != "" && (hasPath(l.files, p) || onDisk(l.root, p)) {
-		return l.base + p + frag
+		return l.base + p + frag, true
 	}
-	return dest
+	return dest, false
 }

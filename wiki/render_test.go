@@ -27,8 +27,9 @@ func TestResolve(t *testing.T) {
 		"https://x.org/a.go": "https://x.org/a.go",
 		"mailto:a@b":         "mailto:a@b",
 	} {
-		if got := l.resolve(dest); got != want {
-			t.Errorf("resolve(%q) = %q, want %q", dest, got, want)
+		// Links to source files, and only those, are citations.
+		if got, cite := l.resolve(dest); got != want || cite != strings.HasPrefix(want, l.base) {
+			t.Errorf("resolve(%q) = %q, %v, want %q", dest, got, cite, want)
 		}
 	}
 }
@@ -78,7 +79,8 @@ func TestRender(t *testing.T) {
 		"<title>The Real Title · proj</title>",
 		"<h1>The Real Title</h1>",
 		`href="unwritten.html"`,
-		`href="../../proj/a.go#L3"`,
+		`<a href="../../proj/a.go#L3" class="cite">`,
+		`<a href="unwritten.html">`,
 		`<li><a href="../../proj/a.go">a.go</a></li>`,
 		`<p class="sources">`,
 		`class="language-mermaid"`,
