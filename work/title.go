@@ -20,6 +20,17 @@ func firstRune(value string) (rune, int) {
 
 func liveAgentTitles(repo repository, getenv func(string) string) map[string]string {
 	titles := make(map[string]string)
+	if inManifold(getenv) {
+		client, err := newManiClient(getenv)
+		if err != nil {
+			return titles
+		}
+		layout, err := client.layout()
+		if err != nil {
+			return titles
+		}
+		return agentTitlesFromManifold(repo, layout)
+	}
 	if getenv == nil || (getenv("APEX_SOCKET") == "" && getenv("apexsession") == "" && getenv("APEX_SESSION") == "") {
 		return titles
 	}
@@ -40,18 +51,31 @@ func liveAgentTitlesFromTool(repo repository, tool *apexapi.Tool) map[string]str
 	return agentTitlesFromWindows(repo, windows)
 }
 
+// titledWindow is a live window, in Apex or Manifold, and its title.
+type titledWindow struct {
+	path  string
+	title string
+}
+
 func agentTitlesFromWindows(repo repository, windows []apexWindow) map[string]string {
+	var titled []titledWindow
+	for _, window := range windows {
+		if window.Live {
+			titled = append(titled, titledWindow{path: window.Path, title: apexWindowTitle(window)})
+		}
+	}
+	return agentTitlesFromTitledWindows(repo, titled)
+}
+
+func agentTitlesFromTitledWindows(repo repository, windows []titledWindow) map[string]string {
 	titles := make(map[string]string)
 	project := filepath.Base(repo.MainRoot)
 	for _, window := range windows {
-		if !window.Live {
-			continue
-		}
-		title := apexWindowTitle(window)
+		title := window.title
 		if title == "" {
 			continue
 		}
-		directory := filepath.Clean(window.Path)
+		directory := filepath.Clean(window.path)
 		var matched *worktree
 		for index := range repo.Worktrees {
 			worktree := &repo.Worktrees[index]
@@ -102,7 +126,8 @@ func sanitizeAgentTitle(raw, worktree, project string) string {
 
 func matchesGenericTitle(title string) bool {
 	switch strings.ToLower(strings.TrimSpace(title)) {
-	case "zsh", "bash", "sh", "fish", "dash", "ksh", "csh", "tcsh", "nu", "xonsh", "elvish", "pwsh", "powershell", "cmd", "tmux", "default":
+	case "zsh", "bash", "sh", "fish", "dash", "ksh", "csh", "tcsh", "nu", "xonsh", "elvish", "pwsh", "powershell", "cmd", "tmux", "default",
+		"agent", "terminal":
 		return true
 	}
 	hostname, err := os.Hostname()

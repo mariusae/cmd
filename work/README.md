@@ -6,6 +6,7 @@ designed to be useful as clickable paths in Apex and Acme as well as in a shell.
 ```sh
 work ls
 work new test-feature
+work new brick-fix fbcode/brick
 work switch 2026-09-09-test-feature
 work rm /data/users/me/fbsource-2026-09-09-test-feature/
 work note
@@ -20,14 +21,16 @@ created if necessary. Outside a repository, bare `work` lists the configured
 default repository's linked worktrees. Explicit `work ls` always lists linked
 worktrees and omits the main worktree. `new` creates a dated sibling of the main
 worktree, checks out the current revision, and switches to its configured
-session. `work switch` accepts a worktree path, label, or partial label and
+session. An optional directory, relative to the repository root (or an absolute
+path inside one of its worktrees), is where that session starts; it is
+remembered, so later switches start there too. `work switch` accepts a worktree path, label, or partial label and
 switches to its session, creating the session if the configured hook does so.
 When several labels contain the partial value, the most recent dated label is
 selected. Exact path and label matches take precedence. `rm` without an
 argument removes the current worktree, but only when run from a linked
 worktree. The main worktree is never removable.
 
-`work note` creates and opens `~/work/HANDLE/working.md` in Apex. An optional
+`work note` creates and opens `~/work/HANDLE/working.md` in Apex or Manifold. An optional
 worktree path or label opens another worktree's notes. The containing directory
 is left available for any other scratch files associated with that worktree.
 
@@ -41,7 +44,7 @@ default: ~/fbsource
 session:
   switch: |
     name="work-${WORK_HANDLE}"
-    session=$(apex new-session "$name" "$WORK_WORKTREE_PATH")
+    session=$(apex new-session "$name" "$WORK_START_PATH")
     apex switch "$session"
 
 pre_remove:
@@ -52,8 +55,9 @@ When the current directory is not in an EdenFS-backed Sapling repository,
 `default` selects the repository whose worktrees are managed.
 
 Each `session.switch` or `pre_remove` entry is run with Bash from the selected
-worktree. Hooks receive `WORK_HANDLE`, `WORK_WORKTREE_PATH`, and
-`WORK_PROJECT_ROOT`; a nonzero exit stops the operation. The Apex example is
+worktree. Hooks receive `WORK_HANDLE`, `WORK_WORKTREE_PATH`, `WORK_PROJECT_ROOT`,
+and `WORK_START_PATH`, the directory the session starts in; a nonzero exit
+stops the operation. The Apex example is
 idempotent because `apex new-session` returns the existing session when its
 name already exists. A command or a YAML list of commands is accepted for both
 hook types.
@@ -110,6 +114,24 @@ not receive that variable, so `work` resolves their terminal window in the
 originating session and caches its concrete ID in the status database.
 `Get` forces an immediate repository and status refresh.
 Deleting the Apex window stops the dashboard process.
+
+## Manifold
+
+`work` uses Manifold instead of Apex when `MANIFOLD_BLOCK` is set, as it is in
+Manifold's terminals and agents; the two are never active together. Every
+feature above works there through `mani`:
+
+- `new` and `switch` show the worktree's space, ignoring `session.switch`. A
+  missing space is made, titled with the worktree's handle: a terminal, the
+  folder, and a smartlog in a column on the left, and an agent on the right,
+  all starting in the session's directory.
+- `note` opens the notes file beside the terminal.
+- The status hooks record the agent's block, and agent titles come from
+  Manifold's agent blocks.
+- `work -a` opens a panel listing each linked worktree with its status and
+  title, and buttons to show its space, show its agent, open its notes, and
+  expand its prompt summaries. The recent summaries follow below. The panel
+  refreshes every two seconds; closing it stops the dashboard process.
 
 ## Build and install
 

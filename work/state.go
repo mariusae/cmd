@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS agent_status (
   apex_socket TEXT NOT NULL DEFAULT '',
   apex_session TEXT NOT NULL DEFAULT '',
   apex_window TEXT NOT NULL DEFAULT '',
+  manifold_block TEXT NOT NULL DEFAULT '',
   updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS agent_status_repository
@@ -51,6 +52,11 @@ CREATE INDEX IF NOT EXISTS agent_events_repository
   ON agent_events (repository_root, created_at DESC, id DESC);
 CREATE TABLE IF NOT EXISTS dashboard_expansion (
   worktree_path TEXT PRIMARY KEY
+);
+CREATE TABLE IF NOT EXISTS worktree_space (
+  worktree_path TEXT PRIMARY KEY,
+  start_directory TEXT NOT NULL DEFAULT '',
+  manifold_space TEXT NOT NULL DEFAULT ''
 );
 `
 
@@ -77,6 +83,7 @@ type agentState struct {
 	ApexSocket     string `json:"apex_socket"`
 	ApexSession    string `json:"apex_session"`
 	ApexWindow     string `json:"apex_window"`
+	ManifoldBlock  string `json:"manifold_block"`
 	UpdatedAt      int64  `json:"updated_at"`
 }
 
@@ -148,6 +155,7 @@ func (s *stateStore) initialize() error {
 		{"agent_status", "apex_socket", "TEXT NOT NULL DEFAULT ''"},
 		{"agent_status", "apex_session", "TEXT NOT NULL DEFAULT ''"},
 		{"agent_status", "apex_window", "TEXT NOT NULL DEFAULT ''"},
+		{"agent_status", "manifold_block", "TEXT NOT NULL DEFAULT ''"},
 		{"agent_events", "transcript_path", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := s.ensureColumn(column.table, column.name, column.definition); err != nil {
@@ -190,6 +198,9 @@ func (s *stateStore) update(state agentState) error {
 			if state.ApexWindow == "" {
 				state.ApexWindow = existing.ApexWindow
 			}
+			if state.ManifoldBlock == "" {
+				state.ManifoldBlock = existing.ManifoldBlock
+			}
 		}
 		if state.SessionID == "" {
 			state.SessionID = existing.SessionID
@@ -226,8 +237,8 @@ WHERE NOT EXISTS (
 );
 INSERT INTO agent_status (
   worktree_path, repository_root, status, agent, session_id, title, transcript_path,
-  apex_socket, apex_session, apex_window, updated_at
-) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %d)
+  apex_socket, apex_session, apex_window, manifold_block, updated_at
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %d)
 ON CONFLICT(worktree_path) DO UPDATE SET
   repository_root = excluded.repository_root,
   status = excluded.status,
@@ -238,6 +249,7 @@ ON CONFLICT(worktree_path) DO UPDATE SET
   apex_socket = excluded.apex_socket,
   apex_session = excluded.apex_session,
   apex_window = excluded.apex_window,
+  manifold_block = excluded.manifold_block,
   updated_at = excluded.updated_at;
 
 COMMIT;
@@ -252,7 +264,7 @@ COMMIT;
 		sqlString(state.Status), sqlString(state.Agent), sqlString(state.SessionID),
 		sqlString(state.Title), sqlString(state.TranscriptPath),
 		sqlString(state.ApexSocket), sqlString(state.ApexSession), sqlString(state.ApexWindow),
-		state.UpdatedAt)
+		sqlString(state.ManifoldBlock), state.UpdatedAt)
 	_, err = s.execute(sql)
 	if err != nil {
 		return fmt.Errorf("updating agent status: %w", err)
@@ -266,7 +278,7 @@ func (s *stateStore) get(worktreePath string) (agentState, bool, error) {
 	}
 	query := fmt.Sprintf(`
 SELECT worktree_path, repository_root, status, agent, session_id, title, transcript_path,
-       apex_socket, apex_session, apex_window, updated_at
+       apex_socket, apex_session, apex_window, manifold_block, updated_at
 FROM agent_status WHERE worktree_path = %s LIMIT 1;
 `, sqlString(filepath.Clean(worktreePath)))
 	output, err := s.executeWithArgs([]string{"-json"}, query)
@@ -306,6 +318,72 @@ WHERE worktree_path = %s
 		sqlString(filepath.Clean(socket)), sqlString(session))
 	if _, err := s.execute(query); err != nil {
 		return fmt.Errorf("remembering Apex agent window: %w", err)
+	}
+	return nil
+}
+
+// rememberManifoldBlock updates the cached agent block once the recorded one
+// has been closed and another agent in the worktree is found.
+func (s *stateStore) rememberManifoldBlock(worktreePath, block string) error {
+	if block == "" {
+		return nil
+	}
+	if err := s.initialize(); err != nil {
+		return err
+	}
+	query := fmt.Sprintf(`
+UPDATE agent_status SET manifold_block = %s WHERE worktree_path = %s;
+`, sqlString(block), sqlString(filepath.Clean(worktreePath)))
+	if _, err := s.execute(query); err != nil {
+		return fmt.Errorf("remembering Manifold agent block: %w", err)
+	}
+	return nil
+}
+
+// worktreeSpace is where a worktree's session starts and, in Manifold, the
+// space made for it.
+type worktreeSpace struct {
+	StartDirectory string `json:"start_directory"`
+	ManifoldSpace  string `json:"manifold_space"`
+}
+
+func (s *stateStore) worktreeSpace(worktreePath string) (worktreeSpace, bool, error) {
+	if err := s.initialize(); err != nil {
+		return worktreeSpace{}, false, err
+	}
+	query := fmt.Sprintf(`
+SELECT start_directory, manifold_space FROM worktree_space WHERE worktree_path = %s LIMIT 1;
+`, sqlString(filepath.Clean(worktreePath)))
+	output, err := s.executeWithArgs([]string{"-json"}, query)
+	if err != nil {
+		return worktreeSpace{}, false, fmt.Errorf("reading worktree space: %w", err)
+	}
+	if len(bytes.TrimSpace(output)) == 0 {
+		return worktreeSpace{}, false, nil
+	}
+	var spaces []worktreeSpace
+	if err := json.Unmarshal(output, &spaces); err != nil {
+		return worktreeSpace{}, false, fmt.Errorf("parsing worktree space database output: %w", err)
+	}
+	if len(spaces) == 0 {
+		return worktreeSpace{}, false, nil
+	}
+	return spaces[0], true, nil
+}
+
+func (s *stateStore) setWorktreeSpace(worktreePath string, space worktreeSpace) error {
+	if err := s.initialize(); err != nil {
+		return err
+	}
+	query := fmt.Sprintf(`
+INSERT INTO worktree_space (worktree_path, start_directory, manifold_space)
+VALUES (%s, %s, %s)
+ON CONFLICT(worktree_path) DO UPDATE SET
+  start_directory = excluded.start_directory,
+  manifold_space = excluded.manifold_space;
+`, sqlString(filepath.Clean(worktreePath)), sqlString(space.StartDirectory), sqlString(space.ManifoldSpace))
+	if _, err := s.execute(query); err != nil {
+		return fmt.Errorf("recording worktree space: %w", err)
 	}
 	return nil
 }
@@ -507,7 +585,7 @@ func (s *stateStore) list(repositoryRoot string) ([]agentState, error) {
 	}
 	query := fmt.Sprintf(`
 SELECT worktree_path, repository_root, status, agent, session_id, title, transcript_path,
-       apex_socket, apex_session, apex_window, updated_at
+       apex_socket, apex_session, apex_window, manifold_block, updated_at
 FROM agent_status
 WHERE repository_root = %s
 ORDER BY updated_at DESC;
@@ -566,8 +644,9 @@ BEGIN IMMEDIATE;
 DELETE FROM agent_status WHERE worktree_path = %s;
 DELETE FROM agent_events WHERE worktree_path = %s;
 DELETE FROM dashboard_expansion WHERE worktree_path = %s;
+DELETE FROM worktree_space WHERE worktree_path = %s;
 COMMIT;
-`, path, path, path)
+`, path, path, path, path)
 	if _, err := s.execute(query); err != nil {
 		return fmt.Errorf("deleting agent status: %w", err)
 	}

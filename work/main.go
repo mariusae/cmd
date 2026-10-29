@@ -17,7 +17,7 @@ const helpText = `work manages linked Sapling worktrees.
 Usage:
   work
   work ls
-  work new NAME
+  work new NAME [DIR]
   work switch PATH|LABEL
   work rm [PATH|LABEL]
   work note [PATH|LABEL]
@@ -33,14 +33,15 @@ worktree-capable repository, it uses the default repository from
 Commands:
   work            Show details for the current worktree, or list the default.
   ls              Print linked worktree paths. The main worktree is omitted.
-  new NAME        Create YYYY-MM-DD-NAME and switch to its session.
+  new NAME [DIR]  Create YYYY-MM-DD-NAME and switch to its session, which
+                  starts in DIR, relative to the repository root, if given.
   switch TARGET   Switch by path, label, or newest partial label match.
   rm              Remove the current linked worktree.
   rm PATH|LABEL   Remove the selected linked worktree.
-  note            Create and open the current worktree's notes file in Apex.
-  note PATH|LABEL Create and open another worktree's notes file in Apex.
+  note            Create and open the current worktree's notes file.
+  note PATH|LABEL Create and open another worktree's notes file.
   status          Show the latest agent status for each linked worktree.
-  -a              Open the live worktree and agent interface in Apex.
+  -a              Open the live worktree and agent dashboard.
   install-hooks   Install status hooks for supported agents.
 
 The ls and new commands print paths with a trailing slash, making their output
@@ -56,9 +57,15 @@ Configuration:
     - /path/to/pre-remove-cleanup.sh
 
 session.switch and pre_remove commands run with the worktree as their working
-directory. They receive WORK_HANDLE, WORK_WORKTREE_PATH, and WORK_PROJECT_ROOT.
-A failing hook stops the operation. If session.switch is not configured, new
-retains its old create-only behavior, while switch reports the missing hook.
+directory. They receive WORK_HANDLE, WORK_WORKTREE_PATH, WORK_PROJECT_ROOT, and
+WORK_START_PATH. A failing hook stops the operation. If session.switch is not
+configured, new retains its old create-only behavior, while switch reports the
+missing hook.
+
+work runs with Apex unless MANIFOLD_BLOCK is set, when it uses Manifold
+instead. There, new and switch show a space for the worktree, making one with
+a terminal, folder, smartlog, and agent when none exists, and ignore
+session.switch.
 `
 
 type command struct {
@@ -93,7 +100,7 @@ func main() {
 func (c command) run(args []string) int {
 	parsed, ok := parseArgs(args)
 	if !ok {
-		fmt.Fprintln(c.stderr, "usage: work [ls] | work new NAME | work switch PATH|LABEL | work rm [PATH|LABEL] | work note [PATH|LABEL] | work status | work -a | work install-hooks (try 'work -help' for help)")
+		fmt.Fprintln(c.stderr, "usage: work [ls] | work new NAME [DIR] | work switch PATH|LABEL | work rm [PATH|LABEL] | work note [PATH|LABEL] | work status | work -a | work install-hooks (try 'work -help' for help)")
 		return 2
 	}
 	if parsed.action == "help" {
@@ -219,7 +226,11 @@ func (c command) run(args []string) int {
 		if err != nil {
 			return c.fail(err)
 		}
-		if err := launchDashboard(c.backend, resolved.repo, store, c.now); err != nil {
+		launch := launchDashboard
+		if inManifold(getenv) {
+			launch = launchManifoldDashboard
+		}
+		if err := launch(c.backend, resolved.repo, store, c.now); err != nil {
 			return c.fail(err)
 		}
 		return 0
@@ -243,7 +254,7 @@ func (c command) run(args []string) int {
 		}
 		plumb := c.plumbFile
 		if plumb == nil {
-			plumb = plumbNote
+			plumb = func(path string) error { return plumbNote(path, getenv) }
 		}
 		if err := plumb(path); err != nil {
 			return c.fail(err)
@@ -254,26 +265,48 @@ func (c command) run(args []string) int {
 		if err != nil {
 			return c.fail(err)
 		}
+		directory, err := startDirectory(resolved.repo, parsed.directory)
+		if err != nil {
+			return c.fail(err)
+		}
 		if err := c.backend.add(resolved.repo, path, label, c.stderr); err != nil {
 			return c.fail(fmt.Errorf("creating %s: %w", path, err))
 		}
-		if len(cfg.Session.Switch) > 0 {
-			target := worktree{Path: path, Label: label}
-			if err := runWorktreeHooks("session.switch", cfg.Session.Switch, resolved.repo, target, c.stdin, c.stdout, c.stderr); err != nil {
-				return c.fail(fmt.Errorf("created %s, but %w", path, err))
-			}
+		target := worktree{Path: path, Label: label}
+		start := worktreeStart(target, directory)
+		if directory != "" && start == path {
+			fmt.Fprintf(c.stderr, "work: warning: %s does not exist in %s; starting at its root\n", directory, path)
+		}
+		store, storeErr := newStateStore(home, getenv)
+		if storeErr == nil && directory != "" {
+			storeErr = store.setWorktreeSpace(path, worktreeSpace{StartDirectory: directory})
+		}
+		if storeErr != nil {
+			fmt.Fprintf(c.stderr, "work: warning: %v\n", storeErr)
+		}
+		if err := c.switchSession(cfg, resolved.repo, target, start, store, getenv); err != nil {
+			return c.fail(fmt.Errorf("created %s, but %w", path, err))
 		}
 		fmt.Fprintln(c.stdout, directoryPath(path))
 		return 0
 	case "switch":
-		if len(cfg.Session.Switch) == 0 {
+		if !inManifold(getenv) && len(cfg.Session.Switch) == 0 {
 			return c.fail(fmt.Errorf("no session.switch hook is configured in %s", configFile(home)))
 		}
 		target, err := switchTarget(resolved.repo, parsed.argument, cwd)
 		if err != nil {
 			return c.fail(err)
 		}
-		if err := runWorktreeHooks("session.switch", cfg.Session.Switch, resolved.repo, target, c.stdin, c.stdout, c.stderr); err != nil {
+		store, err := newStateStore(home, getenv)
+		if err != nil {
+			return c.fail(err)
+		}
+		recorded, _, err := store.worktreeSpace(target.Path)
+		if err != nil {
+			return c.fail(err)
+		}
+		start := worktreeStart(target, recorded.StartDirectory)
+		if err := c.switchSession(cfg, resolved.repo, target, start, store, getenv); err != nil {
 			return c.fail(err)
 		}
 		return 0
@@ -285,7 +318,7 @@ func (c command) run(args []string) int {
 		if target.Main {
 			return c.fail(fmt.Errorf("refusing to remove the main worktree at %s", target.Path))
 		}
-		if err := runWorktreeHooks("pre_remove", cfg.PreRemove, resolved.repo, target, nil, c.stderr, c.stderr); err != nil {
+		if err := runWorktreeHooks("pre_remove", cfg.PreRemove, resolved.repo, target, target.Path, nil, c.stderr, c.stderr); err != nil {
 			return c.fail(err)
 		}
 		if resolved.fromCurrent && pathsEqual(target.Path, resolved.repo.CurrentRoot) {
@@ -312,10 +345,11 @@ func (c command) run(args []string) int {
 }
 
 type parsedArguments struct {
-	action   string
-	argument string
-	agent    string
-	session  string
+	action    string
+	argument  string
+	directory string
+	agent     string
+	session   string
 }
 
 func parseArgs(args []string) (parsedArguments, bool) {
@@ -344,8 +378,12 @@ func parseArgs(args []string) (parsedArguments, bool) {
 	if len(args) == 1 && args[0] == "install-hooks" {
 		return parsedArguments{action: "install-hooks"}, true
 	}
-	if len(args) == 2 && (args[0] == "new" || args[0] == "add") {
-		return parsedArguments{action: "new", argument: args[1]}, true
+	if (len(args) == 2 || len(args) == 3) && (args[0] == "new" || args[0] == "add") {
+		parsed := parsedArguments{action: "new", argument: args[1]}
+		if len(args) == 3 {
+			parsed.directory = args[2]
+		}
+		return parsed, true
 	}
 	if len(args) == 2 && args[0] == "switch" {
 		return parsedArguments{action: "switch", argument: args[1]}, true
@@ -418,7 +456,19 @@ func (c command) recordAgentStatus(parsed parsedArguments, cwd, home string, get
 		sessionID = parsed.session
 	}
 	title := sanitizeAgentTitle(payload.Title, target.handle(), filepath.Base(repo.MainRoot))
-	if liveTitle := liveAgentTitles(repo, getenv)[filepath.Clean(target.Path)]; liveTitle != "" {
+	manifoldBlock := ""
+	if inManifold(getenv) {
+		// The hook runs in the agent's own block, so its title is one cheap
+		// lookup rather than a listing of every space.
+		manifoldBlock = getenv("MANIFOLD_BLOCK")
+		if client, err := newManiClient(getenv); err == nil {
+			if tile, err := client.info(manifoldBlock); err == nil {
+				if liveTitle := sanitizeAgentTitle(tile.Title, target.handle(), filepath.Base(repo.MainRoot)); liveTitle != "" {
+					title = liveTitle
+				}
+			}
+		}
+	} else if liveTitle := liveAgentTitles(repo, getenv)[filepath.Clean(target.Path)]; liveTitle != "" {
 		title = liveTitle
 	}
 	transcriptPath := resolveTranscriptPath(parsed.agent, sessionID, target.Path, payload.TranscriptPath, store)
@@ -443,6 +493,7 @@ func (c command) recordAgentStatus(parsed parsedArguments, cwd, home string, get
 		ApexSocket:     apexSocket,
 		ApexSession:    apexSession,
 		ApexWindow:     apexWindow,
+		ManifoldBlock:  manifoldBlock,
 		UpdatedAt:      c.now().Unix(),
 	}); err != nil {
 		return c.fail(err)
@@ -598,7 +649,31 @@ func switchTarget(repo repository, argument, cwd string) (worktree, error) {
 	return worktree{}, fmt.Errorf("worktree %q not found (use 'work ls' to list worktrees)", argument)
 }
 
-func runWorktreeHooks(name string, hooks []string, repo repository, target worktree, stdin io.Reader, stdout, stderr io.Writer) error {
+// switchSession shows the worktree's session: its Manifold space, or what the
+// session.switch hooks make of it elsewhere. Without hooks, outside Manifold,
+// it does nothing.
+func (c command) switchSession(
+	cfg config,
+	repo repository,
+	target worktree,
+	start string,
+	store *stateStore,
+	getenv func(string) string,
+) error {
+	if inManifold(getenv) {
+		if store == nil {
+			return fmt.Errorf("the state database is required for Manifold spaces")
+		}
+		client, err := newManiClient(getenv)
+		if err != nil {
+			return err
+		}
+		return switchManifoldSpace(client, store, target, start)
+	}
+	return runWorktreeHooks("session.switch", cfg.Session.Switch, repo, target, start, c.stdin, c.stdout, c.stderr)
+}
+
+func runWorktreeHooks(name string, hooks []string, repo repository, target worktree, start string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(hooks) == 0 {
 		return nil
 	}
@@ -608,6 +683,7 @@ func runWorktreeHooks(name string, hooks []string, repo repository, target workt
 		"WORK_HANDLE":        target.handle(),
 		"WORK_WORKTREE_PATH": target.Path,
 		"WORK_PROJECT_ROOT":  repo.MainRoot,
+		"WORK_START_PATH":    start,
 	}
 	for key, value := range values {
 		environment = setEnvironment(environment, key, value)

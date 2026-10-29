@@ -62,8 +62,18 @@ func ensureNoteFile(home string, target worktree, now time.Time) (string, error)
 	return path, nil
 }
 
-func plumbNote(path string) error {
-	tool, err := attachApexTool(fmt.Sprintf("work-note-%d", os.Getpid()), os.Getenv)
+func plumbNote(path string, getenv func(string) string) error {
+	if inManifold(getenv) {
+		client, err := newManiClient(getenv)
+		if err != nil {
+			return err
+		}
+		if err := client.open(path); err != nil {
+			return fmt.Errorf("opening note in Manifold: %w", err)
+		}
+		return nil
+	}
+	tool, err := attachApexTool(fmt.Sprintf("work-note-%d", os.Getpid()), getenv)
 	if err != nil {
 		return err
 	}
