@@ -2,7 +2,9 @@
 
 # `ls dir` prints names relative to `dir`, which is annoying when the output is
 # going into another command or being read out of context. `lf` keeps the same
-# basic interface, but always renders each listed entry relative to `$PWD`.
+# basic interface, but renders each listed entry using the shortest of its
+# absolute path and its path relative to `$PWD`. Entries named by an absolute
+# argument remain absolute.
 #
 # Implementation-wise, this does not ask `ls` to recurse into directory
 # arguments. Instead it expands each directory to the entries that `ls` would
@@ -84,31 +86,52 @@ relative_path() {
     printf '%s\n' "$up${path#"$prefix"/}"
 }
 
+display_path() {
+    local path=$1
+    local force_absolute=$2
+    local absolute
+    local relative
+
+    absolute=$(absolute_path "$path")
+    if (( force_absolute )); then
+        printf '%s\n' "$absolute"
+        return
+    fi
+
+    relative=$(relative_path "$absolute")
+    if (( ${#absolute} < ${#relative} )); then
+        printf '%s\n' "$absolute"
+    else
+        printf '%s\n' "$relative"
+    fi
+}
+
 append_directory_entries() {
     local dir=$1
+    local force_absolute=$2
     local item
-    local relative_dir
+    local display_dir
 
     shopt -s nullglob
-    relative_dir=$(relative_path "$dir")
+    display_dir=$(display_path "$dir" "$force_absolute")
 
     if (( show_all )); then
-        if [[ $relative_dir == . ]]; then
+        if [[ $display_dir == . ]]; then
             entries+=(".")
             entries+=("..")
         else
-            entries+=("$relative_dir/.")
-            entries+=("$relative_dir/..")
+            entries+=("$display_dir/.")
+            entries+=("$display_dir/..")
         fi
     fi
 
     for item in "$dir"/*; do
-        entries+=("$(relative_path "$item")")
+        entries+=("$(display_path "$item" "$force_absolute")")
     done
 
     if (( show_all || almost_all )); then
         for item in "$dir"/.[!.]* "$dir"/..?*; do
-            entries+=("$(relative_path "$item")")
+            entries+=("$(display_path "$item" "$force_absolute")")
         done
     fi
 
@@ -179,12 +202,15 @@ if (( ${#paths[@]} == 0 )); then
 fi
 
 for path in "${paths[@]}"; do
+    force_absolute=0
+    [[ $path == /* ]] && force_absolute=1
+
     if (( directory_mode )) || [[ ! -d $path ]]; then
-        entries+=("$(relative_path "$path")")
+        entries+=("$(display_path "$path" "$force_absolute")")
         continue
     fi
 
-    append_directory_entries "$path"
+    append_directory_entries "$path" "$force_absolute"
 done
 
 if (( ${#entries[@]} == 0 )); then

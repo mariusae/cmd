@@ -86,6 +86,24 @@ got=$(cd "$test_dir/files" && "$script_dir/lf" -A dir)
 got=$(cd "$test_dir/files" && "$script_dir/lf" -d dir)
 assert_equal 'dir/' "$got" 'lf -d lists the directory itself'
 
+got=$(cd "$test_dir/files" && "$script_dir/lf" "$test_dir/files/dir/file")
+assert_equal "$test_dir/files/dir/file" "$got" 'lf preserves an absolute file argument'
+
+got=$(cd "$test_dir/files" && "$script_dir/lf" "$test_dir/files/dir")
+assert_equal \
+    "$test_dir/files/dir/file
+$test_dir/files/dir/run*
+$test_dir/files/dir/sub/" \
+    "$got" 'lf preserves an absolute directory argument'
+
+mkdir -p "$test_dir/files/deep/one/two/three/four/five/six/seven/eight/nine/ten/eleven"
+: >"$test_dir/files/near-root"
+got=$(
+    cd "$test_dir/files/deep/one/two/three/four/five/six/seven/eight/nine/ten/eleven"
+    "$script_dir/lf" ../../../../../../../../../../../../near-root
+)
+assert_equal "$test_dir/files/near-root" "$got" 'lf uses an absolute path when it is shorter'
+
 mkdir -p "$test_dir/files/columns"
 for name in a bb ccc dddd; do
     : >"$test_dir/files/columns/$name"

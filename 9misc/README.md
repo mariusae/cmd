@@ -13,8 +13,9 @@ Small shell commands inspired by Plan 9 from User Space:
 - `lc [ls options] [paths ...]` prints Plan 9's compact, column-oriented
   directory listing through the bundled `mc`.
 - `lf [ls options] [paths ...]` lists files like GNU `ls`, adding type indicators
-  by default, retaining paths relative to the current directory, and printing
-  exactly one entry per line.
+  by default, using the shorter of absolute paths and paths relative to the
+  current directory, and printing exactly one entry per line. Entries named by
+  absolute arguments remain absolute.
 
 Run `./test.bash` to test the commands. Run `./install.bash` to install them
 directly into `~/bin`, or into `$INSTALL_DIR` if that is set. `./update.bash`
