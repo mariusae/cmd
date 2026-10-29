@@ -16,6 +16,7 @@ import (
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer"
+	gmhtml "github.com/yuin/goldmark/renderer/html"
 	"github.com/yuin/goldmark/text"
 	"github.com/yuin/goldmark/util"
 )
@@ -34,13 +35,12 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	"mermaidConfig": func() template.JS { return template.JS(mermaidConfig) },
 }).Parse(pageHTML))
 
-// The type is Lato, as on mutable.org, with code in Inconsolata, narrower
-// than most, for the many names in the text. Their Latin letters are
-// embedded in every page as data: URLs: pages shown where a
+// The type is mutable.org's: Lato, with code in Source Code Pro. Their Latin
+// letters are embedded in every page as data: URLs: pages shown where a
 // Content-Security-Policy allows no stylesheets or fonts from elsewhere, as
 // Meta's artifacts are, still have them. The fonts are Fontsource's
-// (@fontsource/lato and @fontsource/inconsolata 5.3.0), under the SIL Open
-// Font License in fonts/.
+// (@fontsource/lato 5.3.0 and @fontsource/source-code-pro 5.3.1), under the
+// SIL Open Font License in fonts/.
 //
 //go:embed fonts/*.woff2
 var fontFiles embed.FS
@@ -55,8 +55,8 @@ var fonts = []font{
 	{"Lato", "italic", "400", "lato-latin-400-italic.woff2"},
 	{"Lato", "italic", "700", "lato-latin-700-italic.woff2"},
 	{"Lato", "normal", "900", "lato-latin-900-normal.woff2"},
-	{"Inconsolata", "normal", "400", "inconsolata-latin-400-normal.woff2"},
-	{"Inconsolata", "normal", "700", "inconsolata-latin-700-normal.woff2"},
+	{"Source Code Pro", "normal", "400", "source-code-pro-latin-400-normal.woff2"},
+	{"Source Code Pro", "normal", "700", "source-code-pro-latin-700-normal.woff2"},
 }
 
 var fontFaces = template.CSS(fontFaceRules(fonts))
@@ -146,7 +146,10 @@ func render(dest string, s *state, log io.Writer) (string, error) {
 			parser.WithAutoHeadingID(),
 			parser.WithASTTransformers(util.Prioritized(l, 100)),
 		),
-		goldmark.WithRendererOptions(renderer.WithNodeRenderers(util.Prioritized(diagrams, 100))),
+		goldmark.WithRendererOptions(renderer.WithNodeRenderers(
+			util.Prioritized(diagrams, 100),
+			util.Prioritized(headingRenderer{}, 100),
+		)),
 	)
 
 	// Every page is parsed before any is rendered, so that the pictures of
@@ -252,6 +255,34 @@ func shortRevision(rev string) string {
 		return rev[:12]
 	}
 	return rev
+}
+
+// A headingRenderer writes headings with a link to themselves after their
+// text, shown when the heading is pointed at, so that a section can be
+// linked to.
+type headingRenderer struct{}
+
+func (headingRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
+	reg.Register(ast.KindHeading, renderHeading)
+}
+
+func renderHeading(w util.BufWriter, source []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {
+	h := n.(*ast.Heading)
+	if entering {
+		fmt.Fprintf(w, "<h%d", h.Level)
+		if h.Attributes() != nil {
+			gmhtml.RenderAttributes(w, h, gmhtml.HeadingAttributeFilter)
+		}
+		w.WriteByte('>')
+		return ast.WalkContinue, nil
+	}
+	if id, ok := h.AttributeString("id"); ok && h.Level > 1 {
+		if id, ok := id.([]byte); ok {
+			fmt.Fprintf(w, `<a class="anchor" href="#%s" aria-label="Link to this section">#</a>`, util.EscapeHTML(id))
+		}
+	}
+	fmt.Fprintf(w, "</h%d>\n", h.Level)
+	return ast.WalkContinue, nil
 }
 
 // takeTitle removes the page's leading H1, which the layout shows itself, and

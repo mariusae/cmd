@@ -86,6 +86,7 @@ func TestRender(t *testing.T) {
 		`class="language-mermaid"`,
 		`<li class="l2"><a href="#flow--data">Flow &amp; Data</a>`,
 		`<li class="l3"><a href="#detail">Detail</a>`,
+		`<h2 id="flow--data">Flow &amp; Data<a class="anchor" href="#flow--data" aria-label="Link to this section">#</a></h2>`,
 		"Relevant source files",
 		`<li class="top current"><a href="overview.html"><span class="num">1</span>`,
 		`<span class="num">1.1</span><span class="title">Unwritten</span></a>`,

@@ -6,22 +6,24 @@
 <title>{{.Title}} · {{.Wiki}}</title>
 <style>
 {{fonts}}
-  /* The style is mutable.org's, Lato at 17px/1.6 on a 720px measure, set for
-     reference rather than essays: headings in Lato too, code in Inconsolata
-     without a background, and citations that recede. */
+  /* The style is mutable.org's, Lato at 17px/1.6, set for reference rather
+     than essays: lines of about 85 characters, with tables, code and diagrams
+     wider; headings in Lato too; code in Source Code Pro without a background;
+     and citations that recede. */
   :root {
     --text: #333;
     --heading: #15171a;
     --muted: #999;
-    --meta: #777;
+    --meta: #707070; /* the grey of text that must be read: 4.9:1 on white */
     --rule: #e6e6e6;
     --code-bg: #f6f6f6;
     --bg: #fff;
     --accent: #1264a3;
     --link-hover: rgba(29, 155, 209, 0.12);
     --font-sans: Lato, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-    --font-mono: Inconsolata, Menlo, Consolas, Monaco, "Liberation Mono", monospace;
-    --measure: 720px;
+    --font-mono: "Source Code Pro", Menlo, Consolas, Monaco, "Liberation Mono", monospace;
+    --measure: 640px;
+    --wide: 840px;
     --gap: 2.4rem;
     --nav: 26rem;
     /* Diagrams are drawn black on white, and turned light on dark with the page. */
@@ -65,11 +67,14 @@
   a:hover { opacity: 0.8; }
   img { max-width: 100%; height: auto; }
 
-  /* The column: the page, the pages under it on narrow screens, the foot. */
+  /* The column: the page, the pages under it on narrow screens, the foot.
+     It is as wide as tables, code and diagrams may be; all else keeps to
+     the measure. */
   .column {
-    width: min(var(--measure), 100% - var(--gap) * 2);
+    width: min(var(--wide), 100% - var(--gap) * 2);
     margin-inline: auto;
   }
+  .page-header, .content > *, .pager, nav.pages, .site-foot { max-width: var(--measure); }
   main { padding: 6vmin 0 0; }
 
   /* The header, as a post's: the way back and the date, the title, and
@@ -91,7 +96,7 @@
   details.files summary { cursor: pointer; }
   details.files summary:hover { color: var(--heading); }
   details.files ul { list-style: none; margin: 0.8rem 0 0; padding-left: 1.4rem; }
-  details.files li { font-family: var(--font-mono); font-size: 1.05em; line-height: 1.7; }
+  details.files li { font-family: var(--font-mono); font-size: 0.95em; line-height: 1.7; }
   details.files a { color: var(--meta); }
   details.files a:hover { opacity: 1; color: var(--accent); }
 
@@ -100,12 +105,23 @@
   .content > * + * { margin-top: 1.25em; }
   /* Headings are many, and for finding one's way: told apart by size and the
      space above them, h3 by more than a list's bold lead-ins. */
-  .content > h2 { margin-top: 1.7em; }
-  .content > :is(h3, h4) { margin-top: 1.5em; }
+  .content > h2 { margin-top: 1.6em; }
+  .content > h3 { margin-top: 1.65em; }
+  .content > h4 { margin-top: 1.5em; }
   .content > :is(h2, h3, h4) + * { margin-top: 0.6em; }
-  .content h2 { font-size: 1.35em; letter-spacing: -0.01em; }
-  .content h3 { font-size: 1.1em; }
+  .content h2 { font-size: 1.45em; letter-spacing: -0.01em; }
+  .content h3 { font-size: 1.2em; }
   .content h4 { font-size: 1em; color: var(--text); }
+  .content .anchor {
+    margin-left: 0.35em;
+    padding: 0 0.15em;
+    color: var(--muted);
+    font-weight: 400;
+    text-decoration: none;
+    opacity: 0;
+  }
+  .content :is(h2, h3, h4):hover .anchor, .content .anchor:focus-visible { opacity: 1; }
+  .content .anchor:hover { color: var(--accent); background: none; box-shadow: none; }
 
   .content a {
     border-radius: 3px;
@@ -133,7 +149,8 @@
   }
 
   .content :is(ul, ol) { padding-left: 2.8rem; }
-  .content li + li, .content li :is(ul, ol) { margin-top: 0.25em; }
+  .content li + li { margin-top: 0.5em; }
+  .content li :is(ul, ol) { margin-top: 0.25em; }
   .content li > p { margin: 0; }
 
   .content blockquote {
@@ -144,26 +161,32 @@
   .content hr { height: 0; border: 0; border-top: 1px solid var(--rule); }
 
   /* Inline code is set off by its face alone, at a size whose x-height is
-     near Lato's. */
-  code { font-family: var(--font-mono); font-size: 1.05em; }
+     near Lato's, a little under so that its wide letters take less room. */
+  code { font-family: var(--font-mono); font-size: 0.95em; }
   .content pre {
+    width: fit-content;
+    min-width: min(100%, var(--measure));
+    max-width: 100%;
     overflow-x: auto;
     padding: 1.8rem 2rem;
     background: var(--code-bg);
     border-radius: 4px;
-    font-size: 0.95em;
+    font-size: 0.9em;
     line-height: 1.5;
   }
   .content pre code { font-size: 1em; }
 
   /* Tables, often of a sentence a cell, are ruled across only. */
   .content table {
+    width: fit-content;
+    max-width: 100%;
     border-collapse: collapse;
     display: block;
     overflow-x: auto;
     font-size: 1.5rem;
     line-height: 1.45;
   }
+  .content td { font-variant-numeric: tabular-nums; }
   .content th, .content td {
     padding: 0.8rem 2rem 0.8rem 0;
     border-bottom: 1px solid var(--rule);
@@ -178,15 +201,22 @@
     font-weight: 700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    white-space: nowrap;
   }
 
   /* A section's line of sources sits close under it. */
-  .content > p.sources { margin-top: 0.6em; color: var(--muted); font-size: 1.4rem; line-height: 1.5; }
+  .content > p.sources { margin-top: 0.6em; color: var(--meta); font-size: 1.4rem; line-height: 1.5; }
   .content p.sources a.cite { color: inherit; }
   .content p.sources a.cite:hover { color: var(--accent); }
 
-  .diagram { overflow-x: auto; text-align: center; }
+  /* A diagram is as wide as it is drawn, up to the column, and centred on
+     the measure when narrower. */
+  .content > .diagram {
+    width: fit-content;
+    min-width: min(100%, var(--measure));
+    max-width: 100%;
+    overflow-x: auto;
+    text-align: center;
+  }
   .diagram svg, .diagram img { max-width: 100%; height: auto; filter: var(--diagram-filter); }
 
   /* The headings of lists, as on the home page. */
@@ -225,7 +255,7 @@
 
   @media (min-width: 1100px) {
     nav.pages {
-      position: fixed; top: 0; left: 0; bottom: 0; width: var(--nav); margin: 0;
+      position: fixed; top: 0; left: 0; bottom: 0; width: var(--nav); max-width: none; margin: 0;
       overflow-y: auto; padding: 6vmin 2.4rem 4rem;
       font-size: 1.4rem; line-height: 1.35;
     }
@@ -240,9 +270,13 @@
     nav.pages li.child > ul.sections { margin-left: 4.8rem; }
     nav.pages ul.sections a { display: block; padding: 0.3rem 0; color: var(--meta); }
     nav.pages ul.sections li.l3 { padding-left: 1.2rem; }
-    .column { margin-left: max(var(--nav) + var(--gap), 50% - var(--measure) / 2); }
+    .column {
+      width: min(var(--wide), 100% - var(--nav) - var(--gap) * 2);
+      margin-left: max(var(--nav) + var(--gap), 50% - var(--wide) / 2);
+    }
   }
   @media (max-width: 1099px) {
+    .column { width: min(var(--measure), 100% - var(--gap) * 2); }
     nav.pages { margin-top: 6rem; }
     nav.pages a { gap: 1.5rem; padding: 1.5rem 0; line-height: 1.3; }
     nav.pages li + li > a { border-top: 1px solid var(--rule); }
@@ -258,7 +292,7 @@
   }
   @media (max-width: 600px) {
     body { line-height: 1.5; }
-    .content pre { padding: 1.4rem 1.6rem; font-size: 0.82em; }
+    .content pre { padding: 1.4rem 1.6rem; font-size: 0.8em; }
   }
 </style>
 </head>
@@ -323,6 +357,13 @@ if (blocks.length) {
       const div = document.createElement("div");
       div.className = "diagram";
       div.innerHTML = svg;
+      // As wide as it is drawn, as the pictures are, rather than as the page.
+      const root = div.querySelector("svg");
+      const width = root && root.viewBox.baseVal && root.viewBox.baseVal.width;
+      if (width) {
+        root.setAttribute("width", width);
+        root.style.maxWidth = "";
+      }
       (code.closest("figure.diagram") || code.parentElement).replaceWith(div);
     } catch (e) {
       console.warn("mermaid:", e);
