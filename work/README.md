@@ -7,6 +7,7 @@ designed to be useful as clickable paths in Apex and Acme as well as in a shell.
 work ls
 work new test-feature
 work new brick-fix fbcode/brick
+work checkout D123456 fbcode/brick
 work switch 2026-09-09-test-feature
 work rm /data/users/me/fbsource-2026-09-09-test-feature/
 work note
@@ -29,6 +30,16 @@ When several labels contain the partial value, the most recent dated label is
 selected. Exact path and label matches take precedence. `rm` without an
 argument removes the current worktree, but only when run from a linked
 worktree. The main worktree is never removable.
+
+`work checkout REF [DIR]` (or `co`) is `new` for exploring someone else's
+change: it fetches REF, then creates a dated worktree named after it, such as
+`2026-11-02-D123456`, checked out at REF rather than the current revision.
+REF can be a Phabricator diff (`D123456` or its URL), a GitHub pull request
+(`PR42`, `#42`, or its URL, taken from the current repository), or any other
+revset. Sapling pulls the change along with its ancestors, so a diff arrives
+with the part of its stack beneath it. `DIR` works as it does for `new`, except
+that it needs to exist only in REF. Later, `work switch D123456` finds the
+worktree by its partial label.
 
 `work note` creates and opens `~/work/HANDLE/working.md` in Apex or Manifold. An optional
 worktree path or label opens another worktree's notes. The containing directory

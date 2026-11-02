@@ -368,9 +368,23 @@ func spaceFocusBlock(space maniSpace) (string, bool) {
 var errNoStartDirectory = errors.New("start directory does not exist")
 
 // startDirectory resolves a worktree-relative start directory requested for
-// add. Relative directories are taken from the repository root; absolute ones
-// must lie within one of the repository's worktrees.
+// add, which must exist in the current checkout.
 func startDirectory(repo repository, requested string) (string, error) {
+	relative, err := repositoryDirectory(repo, requested)
+	if err != nil || relative == "" {
+		return relative, err
+	}
+	info, err := os.Stat(filepath.Join(repo.CurrentRoot, relative))
+	if err != nil || !info.IsDir() {
+		return "", fmt.Errorf("%w: %s in %s", errNoStartDirectory, relative, repo.CurrentRoot)
+	}
+	return relative, nil
+}
+
+// repositoryDirectory makes a requested start directory relative to the
+// repository root. Relative directories are taken from the root already;
+// absolute ones must lie within one of the repository's worktrees.
+func repositoryDirectory(repo repository, requested string) (string, error) {
 	if requested == "" {
 		return "", nil
 	}
@@ -393,10 +407,6 @@ func startDirectory(repo repository, requested string) (string, error) {
 	}
 	if relative == "." {
 		return "", nil
-	}
-	info, err := os.Stat(filepath.Join(repo.CurrentRoot, relative))
-	if err != nil || !info.IsDir() {
-		return "", fmt.Errorf("%w: %s in %s", errNoStartDirectory, relative, repo.CurrentRoot)
 	}
 	return relative, nil
 }

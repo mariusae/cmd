@@ -124,8 +124,31 @@ func (b *saplingBackend) latestChangeTitle(path string) (string, error) {
 	return strings.Join(strings.Fields(string(output)), " "), nil
 }
 
-func (b *saplingBackend) add(repo repository, path, label string, diagnostics io.Writer) error {
-	cmd := exec.Command(b.executable, "worktree", "add", path, "--label", label, "--rev", ".")
+// resolve names the single commit a revset selects. Phabricator diffs and,
+// with ghrevset.autopull, GitHub pull requests are pulled along with their
+// ancestors when they are not yet local; the pull's progress goes to
+// diagnostics.
+func (b *saplingBackend) resolve(repo repository, revset string, diagnostics io.Writer) (string, error) {
+	cmd := exec.Command(b.executable, "--config", "ghrevset.autopull=true", "log", "-r", revset, "-T", "{node}\\n")
+	cmd.Dir = repo.CurrentRoot
+	cmd.Stderr = diagnostics
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("resolving %s: %w", revset, err)
+	}
+	nodes := strings.Fields(string(output))
+	switch len(nodes) {
+	case 0:
+		return "", fmt.Errorf("%s names no commit", revset)
+	case 1:
+		return nodes[0], nil
+	default:
+		return "", fmt.Errorf("%s names %d commits, not one", revset, len(nodes))
+	}
+}
+
+func (b *saplingBackend) add(repo repository, path, label, rev string, diagnostics io.Writer) error {
+	cmd := exec.Command(b.executable, "worktree", "add", path, "--label", label, "--rev", rev)
 	cmd.Dir = repo.CurrentRoot
 	cmd.Stdout = diagnostics
 	cmd.Stderr = diagnostics

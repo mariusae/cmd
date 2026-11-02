@@ -18,6 +18,7 @@ Usage:
   work
   work ls
   work new NAME [DIR]
+  work checkout REF [DIR]
   work switch PATH|LABEL
   work rm [PATH|LABEL]
   work note [PATH|LABEL]
@@ -35,6 +36,11 @@ Commands:
   ls              Print linked worktree paths. The main worktree is omitted.
   new NAME [DIR]  Create YYYY-MM-DD-NAME and switch to its session, which
                   starts in DIR, relative to the repository root, if given.
+  checkout REF [DIR]
+                  Fetch REF and create YYYY-MM-DD-REF checked out at it, then
+                  switch to its session as new does. REF is a Phabricator
+                  diff (D123 or its URL), a GitHub pull request (PR123, #123,
+                  or its URL), or any revset. co is an alias.
   switch TARGET   Switch by path, label, or newest partial label match.
   rm              Remove the current linked worktree.
   rm PATH|LABEL   Remove the selected linked worktree.
@@ -100,7 +106,7 @@ func main() {
 func (c command) run(args []string) int {
 	parsed, ok := parseArgs(args)
 	if !ok {
-		fmt.Fprintln(c.stderr, "usage: work [ls] | work new NAME [DIR] | work switch PATH|LABEL | work rm [PATH|LABEL] | work note [PATH|LABEL] | work status | work -a | work install-hooks (try 'work -help' for help)")
+		fmt.Fprintln(c.stderr, "usage: work [ls] | work new NAME [DIR] | work checkout REF [DIR] | work switch PATH|LABEL | work rm [PATH|LABEL] | work note [PATH|LABEL] | work status | work -a | work install-hooks (try 'work -help' for help)")
 		return 2
 	}
 	if parsed.action == "help" {
@@ -261,33 +267,32 @@ func (c command) run(args []string) int {
 		}
 		return 0
 	case "new":
-		path, label, err := nextWorktreePath(resolved.repo, parsed.argument, c.now())
-		if err != nil {
-			return c.fail(err)
-		}
 		directory, err := startDirectory(resolved.repo, parsed.directory)
 		if err != nil {
 			return c.fail(err)
 		}
-		if err := c.backend.add(resolved.repo, path, label, c.stderr); err != nil {
-			return c.fail(fmt.Errorf("creating %s: %w", path, err))
+		if err := c.create(cfg, resolved.repo, parsed.argument, ".", directory, home, getenv); err != nil {
+			return c.fail(err)
 		}
-		target := worktree{Path: path, Label: label}
-		start := worktreeStart(target, directory)
-		if directory != "" && start == path {
-			fmt.Fprintf(c.stderr, "work: warning: %s does not exist in %s; starting at its root\n", directory, path)
+		return 0
+	case "checkout":
+		ref, err := parseReference(parsed.argument)
+		if err != nil {
+			return c.fail(err)
 		}
-		store, storeErr := newStateStore(home, getenv)
-		if storeErr == nil && directory != "" {
-			storeErr = store.setWorktreeSpace(path, worktreeSpace{StartDirectory: directory})
+		// The directory need only exist in the checked-out revision, which is
+		// checked once the worktree exists.
+		directory, err := repositoryDirectory(resolved.repo, parsed.directory)
+		if err != nil {
+			return c.fail(err)
 		}
-		if storeErr != nil {
-			fmt.Fprintf(c.stderr, "work: warning: %v\n", storeErr)
+		node, err := c.backend.resolve(resolved.repo, ref.revset, c.stderr)
+		if err != nil {
+			return c.fail(err)
 		}
-		if err := c.switchSession(cfg, resolved.repo, target, start, store, getenv); err != nil {
-			return c.fail(fmt.Errorf("created %s, but %w", path, err))
+		if err := c.create(cfg, resolved.repo, ref.name, node, directory, home, getenv); err != nil {
+			return c.fail(err)
 		}
-		fmt.Fprintln(c.stdout, directoryPath(path))
 		return 0
 	case "switch":
 		if !inManifold(getenv) && len(cfg.Session.Switch) == 0 {
@@ -344,6 +349,35 @@ func (c command) run(args []string) int {
 	}
 }
 
+// create adds a dated worktree named after name at rev, records the
+// directory its session starts in, and switches to that session.
+func (c command) create(cfg config, repo repository, name, rev, directory, home string, getenv func(string) string) error {
+	path, label, err := nextWorktreePath(repo, name, c.now())
+	if err != nil {
+		return err
+	}
+	if err := c.backend.add(repo, path, label, rev, c.stderr); err != nil {
+		return fmt.Errorf("creating %s: %w", path, err)
+	}
+	target := worktree{Path: path, Label: label}
+	start := worktreeStart(target, directory)
+	if directory != "" && start == path {
+		fmt.Fprintf(c.stderr, "work: warning: %s does not exist in %s; starting at its root\n", directory, path)
+	}
+	store, storeErr := newStateStore(home, getenv)
+	if storeErr == nil && directory != "" {
+		storeErr = store.setWorktreeSpace(path, worktreeSpace{StartDirectory: directory})
+	}
+	if storeErr != nil {
+		fmt.Fprintf(c.stderr, "work: warning: %v\n", storeErr)
+	}
+	if err := c.switchSession(cfg, repo, target, start, store, getenv); err != nil {
+		return fmt.Errorf("created %s, but %w", path, err)
+	}
+	fmt.Fprintln(c.stdout, directoryPath(path))
+	return nil
+}
+
 type parsedArguments struct {
 	action    string
 	argument  string
@@ -380,6 +414,13 @@ func parseArgs(args []string) (parsedArguments, bool) {
 	}
 	if (len(args) == 2 || len(args) == 3) && (args[0] == "new" || args[0] == "add") {
 		parsed := parsedArguments{action: "new", argument: args[1]}
+		if len(args) == 3 {
+			parsed.directory = args[2]
+		}
+		return parsed, true
+	}
+	if (len(args) == 2 || len(args) == 3) && (args[0] == "checkout" || args[0] == "co") {
+		parsed := parsedArguments{action: "checkout", argument: args[1]}
 		if len(args) == 3 {
 			parsed.directory = args[2]
 		}

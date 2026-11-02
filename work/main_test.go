@@ -19,6 +19,9 @@ type fakeBackend struct {
 	openCalls    []string
 	addedPath    string
 	addedLabel   string
+	addedRev     string
+	nodes        map[string]string
+	resolved     []string
 	removedPath  string
 	addError     error
 	removeError  error
@@ -40,9 +43,18 @@ func (b *fakeBackend) latestChangeTitle(path string) (string, error) {
 	return b.changeTitles[filepath.Clean(path)], nil
 }
 
-func (b *fakeBackend) add(_ repository, path, label string, _ io.Writer) error {
+func (b *fakeBackend) resolve(_ repository, revset string, _ io.Writer) (string, error) {
+	b.resolved = append(b.resolved, revset)
+	if node, ok := b.nodes[revset]; ok {
+		return node, nil
+	}
+	return "", fmt.Errorf("%s names no commit", revset)
+}
+
+func (b *fakeBackend) add(_ repository, path, label, rev string, _ io.Writer) error {
 	b.addedPath = path
 	b.addedLabel = label
+	b.addedRev = rev
 	if b.onAdd != nil {
 		if err := b.onAdd(path); err != nil {
 			return err
@@ -196,6 +208,74 @@ func TestNewCreatesDatedSiblingAndPrintsIt(t *testing.T) {
 	}
 	if stdout.String() != directoryPath(wantPath)+"\n" {
 		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestCheckoutFetchesReferenceIntoDatedWorktree(t *testing.T) {
+	home := t.TempDir()
+	parent := t.TempDir()
+	root := filepath.Join(parent, "fbsource")
+	marker := filepath.Join(parent, "session.txt")
+	hook := fmt.Sprintf("printf '%%s\\n' \"$WORK_START_PATH\" > %q", marker)
+	writeConfig(t, home, "session:\n  switch: "+hook+"\n")
+	node := strings.Repeat("ab", 20)
+	b := &fakeBackend{
+		repositories: map[string]repository{root: testRepository(root, root+"-old")},
+		nodes:        map[string]string{"D123456": node},
+		onAdd: func(path string) error {
+			// The directory exists only in the fetched revision.
+			return os.MkdirAll(filepath.Join(path, "fbcode", "brick"), 0o755)
+		},
+	}
+	c, stdout, stderr := newTestCommand(t, root, home, b)
+
+	if code := c.run([]string{"co", "https://www.internalfb.com/diff/D123456?dst_version_fbid=1", "fbcode/brick"}); code != 0 {
+		t.Fatalf("run returned %d: %s", code, stderr.String())
+	}
+	wantPath := root + "-2026-09-09-D123456"
+	if b.addedPath != wantPath || b.addedLabel != "2026-09-09-D123456" || b.addedRev != node {
+		t.Fatalf("add = (%q, %q, %q)", b.addedPath, b.addedLabel, b.addedRev)
+	}
+	if stdout.String() != directoryPath(wantPath)+"\n" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	contents, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(wantPath, "fbcode", "brick") + "\n"; string(contents) != want {
+		t.Fatalf("WORK_START_PATH = %q, want %q", contents, want)
+	}
+}
+
+func TestCheckoutReportsUnresolvedReferenceBeforeCreating(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(t.TempDir(), "fbsource")
+	b := &fakeBackend{repositories: map[string]repository{root: testRepository(root, root+"-old")}}
+	c, _, stderr := newTestCommand(t, root, home, b)
+
+	if code := c.run([]string{"checkout", "PR42"}); code != 1 {
+		t.Fatalf("run returned %d, want 1", code)
+	}
+	if b.addedPath != "" {
+		t.Fatalf("created %s for an unresolved reference", b.addedPath)
+	}
+	if !strings.Contains(stderr.String(), "PR42 names no commit") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestNewChecksOutCurrentRevision(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(t.TempDir(), "fbsource")
+	b := &fakeBackend{repositories: map[string]repository{root: testRepository(root, root+"-old")}}
+	c, _, stderr := newTestCommand(t, root, home, b)
+
+	if code := c.run([]string{"new", "task"}); code != 0 {
+		t.Fatalf("run returned %d: %s", code, stderr.String())
+	}
+	if b.addedRev != "." || len(b.resolved) != 0 {
+		t.Fatalf("add rev = %q, resolved = %v", b.addedRev, b.resolved)
 	}
 }
 
@@ -543,6 +623,12 @@ func TestParseDashboardCommands(t *testing.T) {
 	}
 	if parsed, ok := parseArgs([]string{"note", "task"}); !ok || parsed.action != "note" || parsed.argument != "task" {
 		t.Fatalf("parseArgs(note task) = (%#v, %v)", parsed, ok)
+	}
+	if parsed, ok := parseArgs([]string{"checkout", "D1", "fbcode"}); !ok || parsed.action != "checkout" || parsed.argument != "D1" || parsed.directory != "fbcode" {
+		t.Fatalf("parseArgs(checkout D1 fbcode) = (%#v, %v)", parsed, ok)
+	}
+	if parsed, ok := parseArgs([]string{"co"}); ok {
+		t.Fatalf("parseArgs(co) = (%#v, %v), want invalid", parsed, ok)
 	}
 	if parsed, ok := parseArgs([]string{"switch", "task"}); !ok || parsed.action != "switch" || parsed.argument != "task" {
 		t.Fatalf("parseArgs(switch task) = (%#v, %v)", parsed, ok)
