@@ -294,10 +294,12 @@ func switchManifoldSpace(client *maniClient, store *stateStore, target worktree,
 			}
 		}
 		// Showing a space by its id places it as a tile here, so focus one of
-		// its blocks instead, which shows the space itself.
+		// its blocks instead, which shows the space itself. An emptied space
+		// gives up the worktree to the one made below.
 		if block, ok := spaceFocusBlock(space); ok {
 			return client.show(block)
 		}
+		_ = client.annotate(space.ID, worktreeAnnotation, "")
 	}
 
 	space, err := client.id("new", "space", "--title", title, "--cwd", start)
@@ -334,6 +336,73 @@ func switchManifoldSpace(client *maniClient, store *stateStore, target worktree,
 	return client.show(agent)
 }
 
+// clearManifoldSpace closes the tiles of the worktree's space before the
+// worktree is removed, since blocks still working in it (a smartlog, a
+// folder, a shell) hold it open and fail once it is gone. The tile here, where
+// work runs, is left for the caller to close once done, which is reported.
+// The emptied space stays, as Manifold has no way to remove one, but no longer
+// claims the worktree.
+func clearManifoldSpace(client *maniClient, store *stateStore, target worktree, here string) (bool, error) {
+	layout, err := client.layout()
+	if err != nil {
+		return false, err
+	}
+	recorded, _, err := store.worktreeSpace(target.Path)
+	if err != nil {
+		return false, err
+	}
+	// Every space claiming the worktree is cleared, since an earlier removal
+	// can have left one behind.
+	spaces := annotatedSpaces(layout, target.Path)
+	if len(spaces) == 0 {
+		title := manifoldSpaceTitle(target.handle())
+		if space, ok := findManifoldSpace(layout, target.Path, recorded.ManifoldSpace, title, target.handle()); ok {
+			spaces = append(spaces, space)
+		}
+	}
+	hereInSpace := false
+	for _, space := range spaces {
+		closing, here := spaceBlocksToClose(space, here)
+		hereInSpace = hereInSpace || here
+		for _, block := range closing {
+			if _, err := client.run(nil, "", "close", block); err != nil {
+				return hereInSpace, err
+			}
+		}
+		if space.Annotations[worktreeAnnotation] != "" {
+			if err := client.annotate(space.ID, worktreeAnnotation, ""); err != nil {
+				return hereInSpace, err
+			}
+		}
+	}
+	return hereInSpace, nil
+}
+
+func annotatedSpaces(layout maniLayout, worktreePath string) []maniSpace {
+	var spaces []maniSpace
+	for _, space := range layout.Spaces {
+		if linked := space.Annotations[worktreeAnnotation]; linked != "" && filepath.Clean(linked) == filepath.Clean(worktreePath) {
+			spaces = append(spaces, space)
+		}
+	}
+	return spaces
+}
+
+// spaceBlocksToClose lists the space's tiles other than here, and whether
+// here is one of them.
+func spaceBlocksToClose(space maniSpace, here string) ([]string, bool) {
+	var closing []string
+	hereInSpace := false
+	for _, tile := range space.tiles() {
+		if here != "" && tile.Block == here {
+			hereInSpace = true
+			continue
+		}
+		closing = append(closing, tile.Block)
+	}
+	return closing, hereInSpace
+}
+
 // manifoldSpaceTitle drops the date from a dated worktree handle, which the
 // space list would otherwise repeat on every row.
 func manifoldSpaceTitle(handle string) string {
@@ -359,10 +428,14 @@ func findManifoldSpace(layout maniLayout, worktreePath, id string, titles ...str
 		linked := space.Annotations[worktreeAnnotation]
 		return linked == "" || filepath.Clean(linked) == worktreePath
 	}
-	for _, space := range layout.Spaces {
-		if linked := space.Annotations[worktreeAnnotation]; linked != "" && filepath.Clean(linked) == worktreePath {
-			return space, true
+	if spaces := annotatedSpaces(layout, worktreePath); len(spaces) > 0 {
+		// One left empty by an earlier removal yields to one in use.
+		for _, space := range spaces {
+			if len(space.tiles()) > 0 {
+				return space, true
+			}
 		}
+		return spaces[0], true
 	}
 	if id != "" {
 		for _, space := range layout.Spaces {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -83,6 +84,15 @@ func TestFindManifoldSpacePrefersAnnotationOverRecordedIDAndTitle(t *testing.T) 
 	if !ok || space.ID != "h/space-3" {
 		t.Fatalf("annotated space = (%q, %v)", space.ID, ok)
 	}
+	// An emptied space left by an earlier removal yields to one in use.
+	empty := maniSpace{ID: "h/empty", Annotations: map[string]string{worktreeAnnotation: "/repo-renamed"}}
+	layout.Spaces = append([]maniSpace{empty}, layout.Spaces...)
+	if space, ok := findManifoldSpace(layout, "/repo-renamed", ""); !ok || space.ID != "h/space-3" {
+		t.Fatalf("annotated space beside an empty one = (%q, %v)", space.ID, ok)
+	}
+	if spaces := annotatedSpaces(layout, "/repo-renamed"); len(spaces) != 2 {
+		t.Fatalf("annotatedSpaces = %d spaces, want 2", len(spaces))
+	}
 	// A space annotated for another worktree is not taken by id or title.
 	if space, ok := findManifoldSpace(layout, "/repo-task", "h/space-3", "fix"); ok {
 		t.Fatalf("took %q, annotated for another worktree", space.ID)
@@ -108,6 +118,18 @@ func TestFindManifoldSpacePrefersRecordedIDOverTitle(t *testing.T) {
 	}
 	if _, ok := findManifoldSpace(layout, "/repo-task", "", "missing"); ok {
 		t.Fatal("found a space for a missing title")
+	}
+}
+
+func TestSpaceBlocksToCloseLeavesHereForLast(t *testing.T) {
+	space, _ := findManifoldSpace(parseTestManiLayout(t), "/repo-task", "h/space-1")
+	closing, hereInSpace := spaceBlocksToClose(space, "h/terminal")
+	if want := []string{"h/folder", "h/stacked-agent", "h/agent"}; !hereInSpace || !reflect.DeepEqual(closing, want) {
+		t.Fatalf("spaceBlocksToClose = (%v, %v), want (%v, true)", closing, hereInSpace, want)
+	}
+	closing, hereInSpace = spaceBlocksToClose(space, "h/elsewhere")
+	if hereInSpace || len(closing) != 4 {
+		t.Fatalf("spaceBlocksToClose from outside = (%v, %v)", closing, hereInSpace)
 	}
 }
 

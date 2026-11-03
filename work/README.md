@@ -139,6 +139,10 @@ feature above works there through `mani`:
   `work.worktree=PATH`, which is how `work` finds it again, so it can be
   renamed freely; spaces from before annotations are found by title once and
   annotated then.
+- `rm` closes the worktree's space first, so no smartlog, folder, or shell is
+  left working in a directory that is gone. Run from that space's own
+  terminal, it closes the terminal last. Manifold cannot remove a space, so
+  the emptied one remains, no longer linked to the worktree.
 - `note` opens the notes file beside the terminal.
 - The status hooks record the agent's block, and agent titles come from
   Manifold's agent blocks.

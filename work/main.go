@@ -326,6 +326,10 @@ func (c command) run(args []string) int {
 		if err := runWorktreeHooks("pre_remove", cfg.PreRemove, resolved.repo, target, target.Path, nil, c.stderr, c.stderr); err != nil {
 			return c.fail(err)
 		}
+		closeHere := false
+		if inManifold(getenv) {
+			closeHere = c.clearManifoldSpace(target, home, getenv)
+		}
 		if resolved.fromCurrent && pathsEqual(target.Path, resolved.repo.CurrentRoot) {
 			chdir := c.chdir
 			if chdir == nil {
@@ -341,6 +345,12 @@ func (c command) run(args []string) int {
 		if store, err := newStateStore(home, getenv); err == nil {
 			if err := store.delete(target.Path); err != nil {
 				fmt.Fprintf(c.stderr, "work: warning: %v\n", err)
+			}
+		}
+		if closeHere {
+			// This ends work's own terminal, so it comes last.
+			if client, err := newManiClient(getenv); err == nil {
+				_, _ = client.run(nil, "", "close", getenv("MANIFOLD_BLOCK"))
 			}
 		}
 		return 0
@@ -688,6 +698,27 @@ func switchTarget(repo repository, argument, cwd string) (worktree, error) {
 		return matches[0], nil
 	}
 	return worktree{}, fmt.Errorf("worktree %q not found (use 'work ls' to list worktrees)", argument)
+}
+
+// clearManifoldSpace empties the worktree's space ahead of its removal,
+// reporting whether work's own terminal is in it and should be closed after.
+// Failures are warnings: the worktree is removed regardless.
+func (c command) clearManifoldSpace(target worktree, home string, getenv func(string) string) bool {
+	store, err := newStateStore(home, getenv)
+	if err != nil {
+		fmt.Fprintf(c.stderr, "work: warning: %v\n", err)
+		return false
+	}
+	client, err := newManiClient(getenv)
+	if err != nil {
+		fmt.Fprintf(c.stderr, "work: warning: %v\n", err)
+		return false
+	}
+	closeHere, err := clearManifoldSpace(client, store, target, getenv("MANIFOLD_BLOCK"))
+	if err != nil {
+		fmt.Fprintf(c.stderr, "work: warning: clearing the Manifold space: %v\n", err)
+	}
+	return closeHere
 }
 
 // switchSession shows the worktree's session: its Manifold space, or what the
