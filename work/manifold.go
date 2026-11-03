@@ -50,9 +50,10 @@ type maniLayout struct {
 }
 
 type maniSpace struct {
-	ID      string `json:"id"`
-	Title   string `json:"title"`
-	Columns []struct {
+	ID          string            `json:"id"`
+	Title       string            `json:"title"`
+	Annotations map[string]string `json:"annotations"`
+	Columns     []struct {
 		Tiles []maniTile `json:"tiles"`
 	} `json:"columns"`
 }
@@ -168,6 +169,11 @@ func (m *maniClient) onScreen(name string) (bool, error) {
 	return tile.Shown == nil || *tile.Shown, nil
 }
 
+func (m *maniClient) annotate(name, key, value string) error {
+	_, err := m.run(nil, "", "annotate", name, key+"="+value)
+	return err
+}
+
 func (m *maniClient) show(name string) error {
 	_, err := m.run(nil, "", "show", name)
 	return err
@@ -272,10 +278,14 @@ func switchManifoldSpace(client *maniClient, store *stateStore, target worktree,
 		return err
 	}
 	title := manifoldSpaceTitle(target.handle())
-	if space, ok := findManifoldSpace(layout, recorded.ManifoldSpace, title, target.handle()); ok {
-		if space.Title == target.handle() && title != space.Title {
+	if space, ok := findManifoldSpace(layout, target.Path, recorded.ManifoldSpace, title, target.handle()); ok {
+		if space.Annotations[worktreeAnnotation] == "" {
 			// Spaces made before titles dropped the date keep the full handle.
-			_, _ = client.run(nil, "", "rename", space.ID, title)
+			// Once annotated, the title is the user's.
+			if space.Title == target.handle() && title != space.Title {
+				_, _ = client.run(nil, "", "rename", space.ID, title)
+			}
+			_ = client.annotate(space.ID, worktreeAnnotation, filepath.Clean(target.Path))
 		}
 		if space.ID != recorded.ManifoldSpace {
 			recorded.ManifoldSpace = space.ID
@@ -296,6 +306,9 @@ func switchManifoldSpace(client *maniClient, store *stateStore, target worktree,
 	}
 	recorded.ManifoldSpace = space
 	if err := store.setWorktreeSpace(target.Path, recorded); err != nil {
+		return err
+	}
+	if err := client.annotate(space, worktreeAnnotation, filepath.Clean(target.Path)); err != nil {
 		return err
 	}
 	created, err := client.spaceLayout(space)
@@ -332,17 +345,35 @@ func manifoldSpaceTitle(handle string) string {
 	return handle
 }
 
-func findManifoldSpace(layout maniLayout, id string, titles ...string) (maniSpace, bool) {
+// worktreeAnnotation keys the worktree path on its space, linking the two
+// whatever the space comes to be titled.
+const worktreeAnnotation = "work.worktree"
+
+// findManifoldSpace finds the worktree's space: the one annotated with its
+// path, else the recorded one, else, for spaces made before annotations, one
+// with a title it would have been given. Spaces annotated for other worktrees
+// are never taken by id or title.
+func findManifoldSpace(layout maniLayout, worktreePath, id string, titles ...string) (maniSpace, bool) {
+	worktreePath = filepath.Clean(worktreePath)
+	unclaimed := func(space maniSpace) bool {
+		linked := space.Annotations[worktreeAnnotation]
+		return linked == "" || filepath.Clean(linked) == worktreePath
+	}
+	for _, space := range layout.Spaces {
+		if linked := space.Annotations[worktreeAnnotation]; linked != "" && filepath.Clean(linked) == worktreePath {
+			return space, true
+		}
+	}
 	if id != "" {
 		for _, space := range layout.Spaces {
-			if space.ID == id {
+			if space.ID == id && unclaimed(space) {
 				return space, true
 			}
 		}
 	}
 	for _, title := range titles {
 		for _, space := range layout.Spaces {
-			if space.Title == title {
+			if space.Title == title && unclaimed(space) {
 				return space, true
 			}
 		}

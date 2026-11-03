@@ -135,7 +135,10 @@ feature above works there through `mani`:
 - `new` and `switch` show the worktree's space, ignoring `session.switch`. A
   missing space is made, titled with the worktree's handle: a terminal, the
   folder, and a smartlog in a column on the left, and an agent on the right,
-  all starting in the session's directory.
+  all starting in the session's directory. The space is annotated
+  `work.worktree=PATH`, which is how `work` finds it again, so it can be
+  renamed freely; spaces from before annotations are found by title once and
+  annotated then.
 - `note` opens the notes file beside the terminal.
 - The status hooks record the agent's block, and agent titles come from
   Manifold's agent blocks.

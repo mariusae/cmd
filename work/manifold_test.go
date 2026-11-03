@@ -34,6 +34,9 @@ const testManiLayout = `{
     ]},
     {"id": "h/space-2", "title": "other", "columns": [
       {"tiles": [{"block": "h/other-agent", "kind": "agent", "title": "Other work", "cwd": "/elsewhere"}]}
+    ]},
+    {"id": "h/space-3", "title": "fix", "annotations": {"work.worktree": "/repo-renamed"}, "columns": [
+      {"tiles": [{"block": "h/renamed-terminal", "kind": "terminal", "title": "Terminal", "cwd": "/repo-renamed"}]}
     ]}
   ]
 }`
@@ -74,24 +77,36 @@ func TestManifoldAgentBlockFindsAgentInWorktree(t *testing.T) {
 	}
 }
 
+func TestFindManifoldSpacePrefersAnnotationOverRecordedIDAndTitle(t *testing.T) {
+	layout := parseTestManiLayout(t)
+	space, ok := findManifoldSpace(layout, "/repo-renamed/", "h/space-2", "2026-09-09-task")
+	if !ok || space.ID != "h/space-3" {
+		t.Fatalf("annotated space = (%q, %v)", space.ID, ok)
+	}
+	// A space annotated for another worktree is not taken by id or title.
+	if space, ok := findManifoldSpace(layout, "/repo-task", "h/space-3", "fix"); ok {
+		t.Fatalf("took %q, annotated for another worktree", space.ID)
+	}
+}
+
 func TestFindManifoldSpacePrefersRecordedIDOverTitle(t *testing.T) {
 	layout := parseTestManiLayout(t)
-	space, ok := findManifoldSpace(layout, "h/space-2", "2026-09-09-task")
+	space, ok := findManifoldSpace(layout, "/repo-task", "h/space-2", "2026-09-09-task")
 	if !ok || space.ID != "h/space-2" {
 		t.Fatalf("recorded space = (%q, %v)", space.ID, ok)
 	}
-	space, ok = findManifoldSpace(layout, "h/closed", "2026-09-09-task")
+	space, ok = findManifoldSpace(layout, "/repo-task", "h/closed", "2026-09-09-task")
 	if !ok || space.ID != "h/space-1" {
 		t.Fatalf("space by title = (%q, %v)", space.ID, ok)
 	}
 	if block, ok := spaceFocusBlock(space); !ok || block != "h/stacked-agent" {
 		t.Fatalf("spaceFocusBlock = (%q, %v)", block, ok)
 	}
-	space, ok = findManifoldSpace(layout, "", "task", "2026-09-09-task")
+	space, ok = findManifoldSpace(layout, "/repo-task", "", "task", "2026-09-09-task")
 	if !ok || space.ID != "h/space-1" {
 		t.Fatalf("space by older dated title = (%q, %v)", space.ID, ok)
 	}
-	if _, ok := findManifoldSpace(layout, "", "missing"); ok {
+	if _, ok := findManifoldSpace(layout, "/repo-task", "", "missing"); ok {
 		t.Fatal("found a space for a missing title")
 	}
 }
